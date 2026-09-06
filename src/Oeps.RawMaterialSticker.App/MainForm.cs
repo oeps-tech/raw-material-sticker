@@ -61,6 +61,14 @@ public sealed class MainForm : Form
         _settings = UserSettings.Load(paths.SettingsFile);
         _repository = new ComponentRepository(http, config, paths);
         Text = "OEPS Raw Material Sticker";
+        using (var iconStream = typeof(MainForm).Assembly.GetManifestResourceStream("Oeps.AppIcon"))
+        {
+            if (iconStream is not null)
+            {
+                using var appIcon = new Icon(iconStream);
+                Icon = (Icon)appIcon.Clone();
+            }
+        }
         if (args.Contains("--ui-smoke")) { ShowInTaskbar = false; Opacity = 0; }
         Font = new Font("Segoe UI", 10f);
         BackColor = Color.FromArgb(248, 250, 252);
