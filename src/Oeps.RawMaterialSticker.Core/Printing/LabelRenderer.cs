@@ -44,7 +44,7 @@ public sealed class LabelRenderer
     {
         ArgumentNullException.ThrowIfNull(templateText);
         template = templateText.Replace("\r\n", "\n", StringComparison.Ordinal).TrimEnd('\n');
-        if (template != BuiltInTemplate)
+        if (template != BuiltInTemplate.Replace("\r\n", "\n", StringComparison.Ordinal).TrimEnd('\n'))
             throw new ArgumentException("The configured label template differs from the supplied, supported layout. Restore templates/production-label.zpl; layout changes require implementation and validation.", nameof(templateText));
         TemplateSha256 = Convert.ToHexString(SHA256.HashData(new UTF8Encoding(false, true).GetBytes(templateText))).ToLowerInvariant();
     }
