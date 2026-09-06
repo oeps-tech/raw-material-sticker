@@ -1,0 +1,26 @@
+{
+  // Copy ONLY the overrides you need into %LOCALAPPDATA%/OEPS/RawMaterialSticker/appsettings.json.
+  // Your actual public spreadsheet and GitHub repository are already configured in appsettings.json.
+  "dryRun": true,
+  "sampleMode": false,
+  "gitHubOwner": "oeps-tech",
+  "gitHubRepository": "raw-material-sticker",
+  "packagePrefix": "Oeps.RawMaterialSticker",
+  "printer": {
+    "productionValidated": false,
+    "model": "REPLACE_WITH_ACTUAL_ZEBRA_MODEL",
+    "dpi": null,
+    "queueName": "REPLACE_WITH_EXACT_WINDOWS_QUEUE",
+    "connection": "REPLACE_WITH_USB_NETWORK_OR_OTHER_CONNECTION",
+    "templatePath": "templates/production-label.zpl",
+    "validatedTemplateSha256": "REPLACE_WITH_SHA256_OF_PHYSICALLY_VALIDATED_TEMPLATE",
+    "expensiveTemplatePath": "templates/expensive-label.zpl",
+    "validatedExpensiveTemplateSha256": "REPLACE_WITH_SHA256_OF_PHYSICALLY_VALIDATED_EXPENSIVE_TEMPLATE",
+    "printSpeedIps": null,
+    "darkness": null,
+    "mediaTracking": "REPLACE_WITH_continuous_web_OR_mark",
+    "printMethod": "REPLACE_WITH_direct-thermal_OR_thermal-transfer",
+    "longestValidatedOepsPn": "REPLACE_WITH_WIDEST_PN_PHYSICALLY_PRINTED_AND_SCANNED",
+    "validationNotes": "REPLACE_WITH_MODEL_DPI_SOFTWARE_EDITION_MEDIA_FONTS_QUIET_ZONES_AND_SCAN_RESULTS"
+  }
+}

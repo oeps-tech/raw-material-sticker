@@ -1,0 +1,554 @@
+using System.Globalization;
+using System.Reflection;
+using System.Drawing.Printing;
+using Oeps.RawMaterialSticker.App.Printing;
+using Oeps.RawMaterialSticker.Core;
+using Oeps.RawMaterialSticker.Core.Configuration;
+using Oeps.RawMaterialSticker.Core.Data;
+using Oeps.RawMaterialSticker.Core.Printing;
+using Oeps.RawMaterialSticker.Core.Updates;
+
+namespace Oeps.RawMaterialSticker.App;
+
+public sealed class MainForm : Form
+{
+    private readonly AppConfiguration _config;
+    private readonly AppPaths _paths;
+    private readonly UserSettings _settings;
+    private readonly ComponentRepository _repository;
+    private readonly HttpClient _http;
+    private readonly string[] _args;
+    private readonly OperationSession _session = new();
+    private readonly CancellationTokenSource _closing = new();
+    private readonly System.Windows.Forms.Timer _timer = new() { Interval = 1000 };
+    private readonly ComboBox _printer = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, AccessibleName = "Printer" };
+    private readonly RadioButton _oepsMode = SearchModeButton("&OEPS PN");
+    private readonly RadioButton _mpnMode = SearchModeButton("&MPN");
+    private readonly TextBox _search = new() { Dock = DockStyle.Fill, PlaceholderText = "Search part numbers…", AccessibleName = "Component search", BorderStyle = BorderStyle.None };
+    private readonly ListBox _suggestions = new() { Visible = false, IntegralHeight = false, AccessibleName = "Component suggestions", DrawMode = DrawMode.OwnerDrawFixed, BorderStyle = BorderStyle.FixedSingle };
+    private readonly TextBox _pn = ReadOnlyBox("Selected OEPS PN");
+    private readonly TextBox _mpn = ReadOnlyBox("Selected MPN");
+    private readonly TextBox _description = ReadOnlyBox("Selected description");
+    private readonly CheckBox _extendedDescription = new() { Text = "&Extended description", AutoSize = true, Margin = new Padding(0, 0, 0, 0) };
+    private Panel _descriptionFrame = null!;
+    private readonly ComboBox _month = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 64, AccessibleName = "Reception month" };
+    private readonly ComboBox _year = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 84, AccessibleName = "Reception year" };
+    private readonly NumericUpDown _quantity = new() { Width = 116, Minimum = 0, Maximum = int.MaxValue, AccessibleName = "Component quantity" };
+    private readonly CheckBox _dryRun = new() { Text = "&Dry run", AutoSize = true };
+    private readonly CheckBox _dateUnavailable = new() { Text = "Not &available", AutoSize = true, CheckAlign = ContentAlignment.MiddleRight, AccessibleName = "Reception date not available", Margin = new Padding(8, 4, 0, 0) };
+    private readonly Button _print = new() { Text = "Print sticker", Dock = DockStyle.Fill, BackColor = Color.FromArgb(0, 103, 192), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
+    private readonly Button _refresh = new() { Text = "&Update database", Dock = DockStyle.Fill, FlatStyle = FlatStyle.Flat, BackColor = Color.White, ForeColor = Color.FromArgb(0, 93, 174) };
+    private readonly Label _dateHint = new() { AutoSize = true, ForeColor = Color.FromArgb(87, 99, 114), Margin = new Padding(9, 6, 0, 0) };
+    private readonly Label _validation = new() { Dock = DockStyle.Fill, ForeColor = Color.FromArgb(135, 65, 15), AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
+    private readonly Label _syncStatus = new() { Dock = DockStyle.Fill, ForeColor = Color.FromArgb(87, 99, 114), AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
+    private readonly Label _syncIndicator = new() { Text = "●", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft };
+    private readonly Label _jobStatus = new() { Dock = DockStyle.Fill, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
+    private readonly ToolTip _toolTip = new() { AutoPopDelay = 15000 };
+    private Control _searchFrame = null!;
+    private readonly LinkLabel _updateStatus = new() { AutoSize = true, LinkColor = Color.FromArgb(28, 95, 171), Text = "" };
+    private readonly string _version = (Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.1.0").Split('+')[0];
+    private LabelRenderer? _renderer;
+    private LabelJobRenderer? _jobRenderer;
+    private string? _expensiveTemplateError;
+    private string? _templateError;
+    private string? _printerError;
+    private bool _submitting, _changingSearch, _checkingRelease;
+    private DateTimeOffset _nextReleaseCheck = DateTimeOffset.MinValue;
+
+    public MainForm(AppConfiguration config, AppPaths paths, HttpClient http, string[] args)
+    {
+        _config = config; _paths = paths; _http = http; _args = args;
+        _settings = UserSettings.Load(paths.SettingsFile);
+        _repository = new ComponentRepository(http, config, paths);
+        Text = "OEPS Raw Material Sticker";
+        if (args.Contains("--ui-smoke")) { ShowInTaskbar = false; Opacity = 0; }
+        Font = new Font("Segoe UI", 10f);
+        BackColor = Color.FromArgb(248, 250, 252);
+        AutoScaleMode = AutoScaleMode.Dpi;
+        ClientSize = new Size(_settings.WindowWidth, _settings.WindowHeight);
+        MinimumSize = SizeFromClientSize(new Size(560, 530));
+        StartPosition = FormStartPosition.CenterScreen;
+        if (_settings.WindowX is int x && _settings.WindowY is int y && Screen.AllScreens.Any(s => s.WorkingArea.IntersectsWith(new Rectangle(x, y, 100, 100))))
+        { StartPosition = FormStartPosition.Manual; Location = new Point(x, y); }
+        if (_settings.WindowMaximized) WindowState = FormWindowState.Maximized;
+        BuildLayout();
+        _month.Items.AddRange(Enumerable.Range(1, 12).Select(n => (object)n.ToString("00")).ToArray());
+        _year.Items.AddRange(Enumerable.Range(2000, 100).Select(n => (object)n.ToString("0000")).ToArray());
+        _month.SelectedItem = _session.Month; _year.Text = _session.Year;
+        _quantity.Text = "";
+        _dryRun.Checked = config.DryRun || config.SampleMode;
+        _dryRun.Enabled = !config.SampleMode;
+        _oepsMode.Checked = _settings.SearchMode == SearchMode.OepsPn; _mpnMode.Checked = !_oepsMode.Checked;
+        _extendedDescription.Checked = _settings.ExtendedDescription;
+        StyleSearchModes();
+        LoadPrinters();
+        try
+        {
+            var templatePath = Path.IsPathRooted(config.Printer.TemplatePath) ? config.Printer.TemplatePath : Path.Combine(AppContext.BaseDirectory, config.Printer.TemplatePath);
+            _renderer = new LabelRenderer(File.ReadAllText(templatePath));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or InvalidDataException) { _templateError = "Template unavailable: " + e.Message; }
+        ExpensiveLabelRenderer? expensiveRenderer = null;
+        try
+        {
+            var path = Path.IsPathRooted(config.Printer.ExpensiveTemplatePath) ? config.Printer.ExpensiveTemplatePath : Path.Combine(AppContext.BaseDirectory, config.Printer.ExpensiveTemplatePath);
+            expensiveRenderer = new ExpensiveLabelRenderer(File.ReadAllText(path));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or InvalidDataException) { _expensiveTemplateError = "L3 expensive template unavailable: " + e.Message; }
+        if (_renderer is not null) _jobRenderer = new LabelJobRenderer(_renderer, expensiveRenderer);
+        _repository.LoadCache();
+        _search.TextChanged += (_, _) => { if (!_changingSearch) { _session.InvalidateSelection(); ShowSuggestions(); UpdateValidation(); } };
+        _search.KeyDown += SearchKeyDown;
+        _search.Enter += (_, _) => { if (_session.Selected is null) ShowSuggestions(); };
+        _search.Leave += (_, _) => HideSuggestionsAfterFocusChange();
+        _suggestions.Leave += (_, _) => HideSuggestionsAfterFocusChange();
+        _suggestions.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { SelectSuggestion(); e.SuppressKeyPress = true; } else if (e.KeyCode == Keys.Escape) { _search.Focus(); HideSuggestions(); e.SuppressKeyPress = true; } };
+        _suggestions.DrawItem += DrawSuggestion;
+        _suggestions.MouseClick += (_, e) => { if (_suggestions.IndexFromPoint(e.Location) >= 0) SelectSuggestion(); };
+        _oepsMode.CheckedChanged += (_, _) => { StyleSearchModes(); _session.InvalidateSelection(); ShowSuggestions(); UpdateValidation(); };
+        _mpnMode.CheckedChanged += (_, _) => StyleSearchModes();
+        _printer.SelectedIndexChanged += (_, _) => { _printerError = null; UpdateValidation(); };
+        _printer.DropDown += (_, _) => LoadPrinters();
+        _month.SelectedIndexChanged += (_, _) => { _session.Month = _month.Text; UpdateValidation(); };
+        _year.TextChanged += (_, _) => { _session.Year = _year.Text; UpdateValidation(); };
+        _dateUnavailable.CheckedChanged += (_, _) =>
+        {
+            _session.DateUnavailable = _dateUnavailable.Checked;
+            _month.Enabled = _year.Enabled = !_dateUnavailable.Checked;
+            UpdateValidation();
+        };
+        _quantity.TextChanged += (_, _) => { _session.Quantity = _quantity.Text; UpdateValidation(); };
+        _quantity.ValueChanged += (_, _) => { _session.Quantity = _quantity.Text; UpdateValidation(); };
+        _dryRun.CheckedChanged += (_, _) => UpdateValidation();
+        _extendedDescription.CheckedChanged += (_, _) => UpdateValidation();
+        _print.Click += async (_, _) => await SubmitAsync();
+        _refresh.Click += async (_, _) => await RefreshAsync();
+        _updateStatus.LinkClicked += (_, _) => { _jobStatus.Text = "Close this app when ready, then start it using the OEPS desktop shortcut to install the update."; };
+        _timer.Tick += async (_, _) =>
+        {
+            UpdateFooter();
+            if (!_config.SampleMode && !_repository.IsRefreshing && DateTimeOffset.UtcNow >= _repository.NextRefreshUtc) await RefreshAsync();
+            if (!_checkingRelease && DateTimeOffset.UtcNow >= _nextReleaseCheck) await CheckReleaseAsync();
+        };
+        Shown += async (_, _) =>
+        {
+            AppInstanceCoordinator.SignalReadyFromArguments(args);
+            _timer.Start(); _search.Focus(); UpdateValidation();
+            if (args.Contains("--ui-smoke")) { await RunUiSmokeAsync(); return; }
+            await Task.WhenAll(RefreshAsync(), CheckReleaseAsync());
+        };
+        FormClosing += OnClosing;
+        Deactivate += (_, _) => HideSuggestions();
+        Resize += (_, _) => HideSuggestions();
+        UpdateValidation(); UpdateFooter();
+        if (_settings.LoadError is not null) _jobStatus.Text = _settings.LoadError;
+    }
+
+    private static TextBox ReadOnlyBox(string name) => new() { ReadOnly = true, Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, BackColor = Color.FromArgb(239, 243, 247), AccessibleName = name, TabStop = false };
+    private static Label Caption(string text) => new() { Text = text, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(0, 0, 8, 0) };
+    private static RadioButton SearchModeButton(string text) => new() { Text = text, Appearance = Appearance.Button, TextAlign = ContentAlignment.MiddleCenter, Dock = DockStyle.Fill, FlatStyle = FlatStyle.Flat, Margin = Padding.Empty };
+    private void StyleSearchModes()
+    {
+        foreach (var button in new[] { _oepsMode, _mpnMode })
+        {
+            button.BackColor = button.Checked ? Color.FromArgb(0, 103, 192) : Color.FromArgb(239, 243, 247);
+            button.ForeColor = button.Checked ? Color.White : Color.FromArgb(32, 44, 58);
+            button.FlatAppearance.BorderColor = button.Checked ? Color.FromArgb(0, 103, 192) : Color.FromArgb(190, 200, 212);
+            button.FlatAppearance.CheckedBackColor = Color.FromArgb(0, 103, 192);
+        }
+    }
+    private static Panel InputFrame(Control input, Color background, bool searchIcon = false)
+    {
+        var frame = new Panel { Dock = DockStyle.Fill, BackColor = background, Padding = new Padding(9, 6, 9, 5), Margin = new Padding(0, 4, 0, 4) };
+        frame.Paint += (_, e) => ControlPaint.DrawBorder(e.Graphics, frame.ClientRectangle, Color.FromArgb(199, 207, 217), ButtonBorderStyle.Solid);
+        if (searchIcon)
+        {
+            var icon = new Panel { Dock = DockStyle.Right, Width = 23, Cursor = Cursors.IBeam };
+            icon.Paint += (_, e) =>
+            {
+                e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                using var pen = new Pen(Color.FromArgb(95, 107, 122), 1.7f);
+                e.Graphics.DrawEllipse(pen, 3, 1, 11, 11); e.Graphics.DrawLine(pen, 13, 11, 19, 17);
+            };
+            icon.Click += (_, _) => input.Focus();
+            frame.Controls.Add(input); frame.Controls.Add(icon);
+        }
+        else frame.Controls.Add(input);
+        return frame;
+    }
+    private void BuildLayout()
+    {
+        var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(16, 12, 16, 0) };
+        scroll.Scroll += (_, _) => HideSuggestions();
+        var layout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, RowCount = 0 };
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        void Row(Control control, int height) { layout.RowCount++; layout.RowStyles.Add(new RowStyle(SizeType.Absolute, height)); layout.Controls.Add(control, 0, layout.RowCount - 1); }
+        var printerRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty, Padding = new Padding(12, 0, 0, 0) };
+        printerRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130)); printerRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        printerRow.Controls.Add(Caption("&Printer"), 0, 0); _printer.Anchor = AnchorStyles.Left | AnchorStyles.Right; _printer.Dock = DockStyle.None; printerRow.Controls.Add(_printer, 1, 0);
+        Row(printerRow, 38); Row(new Panel(), 8);
+        var fields = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 8, BackColor = Color.White, Padding = new Padding(12), Margin = Padding.Empty };
+        fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130)); fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        fields.Paint += (_, e) => ControlPaint.DrawBorder(e.Graphics, fields.ClientRectangle, Color.FromArgb(219, 226, 234), ButtonBorderStyle.Solid);
+        for (var i = 0; i < 7; i++) fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        void Field(string caption, Control control, int row)
+        {
+            var label = Caption(caption); label.TabIndex = row * 2;
+            control.TabIndex = row * 2 + 1;
+            fields.Controls.Add(label, 0, row); fields.Controls.Add(control, 1, row);
+        }
+        var modes = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = new Padding(0, 3, 0, 4) };
+        modes.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); modes.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        modes.Controls.Add(_oepsMode, 0, 0); modes.Controls.Add(_mpnMode, 1, 0); Field("Search by", modes, 0);
+        _searchFrame = InputFrame(_search, Color.White, searchIcon: true); Field("&Component", _searchFrame, 1);
+        Field("OEPS PN", InputFrame(_pn, _pn.BackColor), 4); Field("MPN", InputFrame(_mpn, _mpn.BackColor), 5);
+        _description.TabStop = true;
+        _descriptionFrame = InputFrame(_description, _description.BackColor);
+        Field("Description", _descriptionFrame, 6);
+        _extendedDescription.TabIndex = 15;
+        fields.Controls.Add(_extendedDescription, 1, 7);
+        var date = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0, 6, 0, 0) };
+        _month.Margin = new Padding(0, 0, 8, 0); _year.Margin = Padding.Empty;
+        _dateHint.Font = new Font(Font.FontFamily, 9f); _dateHint.Margin = new Padding(6, 5, 0, 0);
+        _dateUnavailable.Font = _dateHint.Font;
+        date.Controls.AddRange([_month, _year, _dateHint, _dateUnavailable]); Field("Reception &date", date, 2);
+        var quantityRow = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0, 6, 0, 0) };
+        _quantity.Margin = new Padding(0, 0, 12, 0);
+        quantityRow.Controls.AddRange([_quantity, new Label { Text = "Components in package", AutoSize = true, ForeColor = Color.FromArgb(87, 99, 114), Margin = new Padding(0, 5, 0, 0) }]); Field("&Quantity", quantityRow, 3);
+        Row(fields, 328); Row(new Panel(), 6);
+        var buttons = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
+        buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45)); buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
+        _refresh.Margin = new Padding(0, 0, 8, 0); _print.Margin = Padding.Empty;
+        _refresh.FlatAppearance.BorderColor = _refresh.ForeColor; _print.FlatAppearance.BorderSize = 0;
+        _print.Font = new Font(Font, FontStyle.Bold);
+        buttons.Controls.Add(_refresh, 0, 0); buttons.Controls.Add(_print, 1, 0); Row(buttons, 38);
+        var validationRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
+        validationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); validationRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        _dryRun.Anchor = AnchorStyles.Right; _dryRun.Margin = new Padding(10, 0, 0, 0);
+        _validation.Font = new Font(Font.FontFamily, 8.5f); _jobStatus.Font = _validation.Font;
+        validationRow.Controls.Add(_validation, 0, 0); validationRow.Controls.Add(_dryRun, 1, 0); Row(validationRow, 30); Row(_jobStatus, 29);
+        var footer = new TableLayoutPanel { Dock = DockStyle.Bottom, Height = 35, ColumnCount = 4, Padding = new Padding(16, 0, 12, 0), BackColor = Color.FromArgb(240, 244, 248), Font = new Font(Font.FontFamily, 8.5f) };
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 19)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 65)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        footer.Controls.Add(_syncIndicator, 0, 0); footer.Controls.Add(_syncStatus, 1, 0); footer.Controls.Add(Caption($"│  v{_version}"), 2, 0);
+        _updateStatus.Anchor = AnchorStyles.Right; footer.Controls.Add(_updateStatus, 3, 0);
+        scroll.Controls.Add(layout); Controls.Add(scroll); Controls.Add(footer); Controls.Add(_suggestions);
+        _suggestions.ItemHeight = 28;
+        void DismissOnClick(Control parent)
+        {
+            foreach (Control control in parent.Controls)
+            {
+                if (control == _searchFrame || control == _suggestions) continue;
+                control.MouseDown += (_, _) => HideSuggestions(); DismissOnClick(control);
+            }
+        }
+        DismissOnClick(this);
+        _jobStatus.TextChanged += (_, _) => _toolTip.SetToolTip(_jobStatus, _jobStatus.Text);
+    }
+
+    private void LoadPrinters()
+    {
+        var intended = _printer.SelectedItem as string ?? _settings.LastPrinterName;
+        try
+        {
+            var printers = PrinterSettings.InstalledPrinters.Cast<string>().Order(StringComparer.OrdinalIgnoreCase).ToArray();
+            _printer.BeginUpdate(); _printer.Items.Clear(); _printer.Items.AddRange(printers); _printer.SelectedIndex = -1;
+            if (intended is not null && printers.Contains(intended, StringComparer.Ordinal)) _printer.SelectedItem = intended;
+            _printer.EndUpdate();
+            _printerError = intended is not null && _printer.SelectedIndex < 0 ? $"Saved printer '{intended}' is unavailable. Select a printer explicitly." : printers.Length == 0 ? "No installed printer queues. Dry runs are available." : null;
+        }
+        catch (Exception e) { _printerError = "Cannot list printer queues: " + e.Message; }
+        if (_printerError is not null) _jobStatus.Text = _printerError;
+        UpdateValidation();
+    }
+
+    private void ShowSuggestions()
+    {
+        var found = ComponentSearch.Search(_repository.Components, _search.Text, _oepsMode.Checked ? SearchMode.OepsPn : SearchMode.Mpn);
+        _suggestions.BeginUpdate(); _suggestions.Items.Clear();
+        foreach (var c in found) _suggestions.Items.Add(new Suggestion(c));
+        _suggestions.SelectedIndex = -1; _suggestions.EndUpdate();
+        if ((_search.Focused || _suggestions.Focused) && !string.IsNullOrWhiteSpace(_search.Text) && _session.Selected is null && found.Count > 0)
+            OpenSuggestions();
+        else HideSuggestions();
+    }
+    private void OpenSuggestions()
+    {
+        if (_suggestions.Items.Count == 0) return;
+        var location = PointToClient(_searchFrame.PointToScreen(new Point(0, _searchFrame.Height)));
+        var height = Math.Min(6, _suggestions.Items.Count) * _suggestions.ItemHeight + 2;
+        _suggestions.SetBounds(location.X, location.Y, _searchFrame.Width, Math.Min(height, Math.Max(_suggestions.ItemHeight + 2, ClientSize.Height - location.Y - 38)));
+        _suggestions.BringToFront(); _suggestions.Show();
+    }
+    private void HideSuggestions() { _suggestions.Hide(); _suggestions.ClearSelected(); }
+    private void HideSuggestionsAfterFocusChange()
+    {
+        if (!IsHandleCreated || IsDisposed) return;
+        BeginInvoke(() => { if (!IsDisposed && !_search.ContainsFocus && !_suggestions.ContainsFocus) HideSuggestions(); });
+    }
+    private void DrawSuggestion(object? sender, DrawItemEventArgs e)
+    {
+        if (e.Index < 0 || _suggestions.Items[e.Index] is not Suggestion suggestion) return;
+        var selected = (e.State & DrawItemState.Selected) != 0;
+        using var background = new SolidBrush(selected ? Color.FromArgb(217, 234, 253) : Color.White);
+        e.Graphics.FillRectangle(background, e.Bounds);
+        var pnWidth = Math.Min(e.Bounds.Width / 2, (int)(150 * DeviceDpi / 96f));
+        var pnBounds = new Rectangle(e.Bounds.X + 9, e.Bounds.Y, pnWidth - 12, e.Bounds.Height);
+        var mpnBounds = new Rectangle(e.Bounds.X + pnWidth, e.Bounds.Y, e.Bounds.Width - pnWidth - 9, e.Bounds.Height);
+        const TextFormatFlags flags = TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix;
+        TextRenderer.DrawText(e.Graphics, suggestion.DisplayOepsPn, Font, pnBounds, Color.FromArgb(32, 44, 58), flags);
+        TextRenderer.DrawText(e.Graphics, suggestion.Component.Mpn, Font, mpnBounds, Color.FromArgb(70, 84, 102), flags);
+    }
+    private void SearchKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.KeyCode is Keys.Down or Keys.Up && _suggestions.Items.Count > 0)
+        { OpenSuggestions(); _suggestions.SelectedIndex = Math.Clamp(_suggestions.SelectedIndex + (e.KeyCode == Keys.Down ? 1 : -1), 0, _suggestions.Items.Count - 1); e.SuppressKeyPress = true; }
+        else if (e.KeyCode == Keys.Enter && _suggestions.Visible) { SelectSuggestion(); e.SuppressKeyPress = true; }
+        else if (e.KeyCode == Keys.Escape) { HideSuggestions(); e.SuppressKeyPress = true; }
+    }
+    private void SelectSuggestion()
+    {
+        if (_suggestions.SelectedItem is not Suggestion item) return;
+        _session.Select(item.Component);
+        _changingSearch = true;
+        _search.Text = _oepsMode.Checked ? item.Component.OepsPn : item.Component.Mpn;
+        _changingSearch = false;
+        HideSuggestions();
+        _jobStatus.Text = ""; UpdateValidation(); _quantity.Focus();
+    }
+    private LabelRequest? GetRequest(out string? error)
+    {
+        error = null;
+        if (_session.Selected is not { } c) { error = _repository.HasData ? "Select a component pairing from the suggestions." : "An initial successful database download is required. Use --sample for offline demonstration."; return null; }
+        if (!_repository.HasExpensiveData) { error = "Update database to load expensive-item status before printing."; return null; }
+        int year = 0, month = 0;
+        if (!_dateUnavailable.Checked && (_year.Text.Length != 4 || !int.TryParse(_year.Text, NumberStyles.None, CultureInfo.InvariantCulture, out year) || !int.TryParse(_month.Text, out month))) { error = "Enter a four-digit year and select a reception month."; return null; }
+        if (!int.TryParse(_quantity.Text, NumberStyles.None, CultureInfo.InvariantCulture, out var quantity) || quantity <= 0) { error = "Quantity must be a positive whole number of components."; return null; }
+        return new LabelRequest(c.OepsPn, c.Mpn, month, year, quantity, _dateUnavailable.Checked);
+    }
+    private void UpdateValidation()
+    {
+        var isExpensive = _session.Selected?.IsExpensive == true;
+        _pn.Text = _session.Selected is { } selected ? selected.OepsPn + (isExpensive ? " - EXPENSIVE ITEM💰" : "") : "—";
+        _mpn.Text = _session.Selected?.Mpn ?? "—";
+        var description = _session.Selected?.Description ?? "";
+        var extended = _extendedDescription.Checked;
+        var bracket = description.IndexOf('[');
+        var displayedDescription = !extended && bracket >= 0 ? description[..bracket].TrimEnd() : description;
+        _description.Font = _mpn.Font;
+        _description.Multiline = false; _description.WordWrap = false;
+        _description.ScrollBars = ScrollBars.None;
+        _descriptionFrame.Padding = new Padding(9, 6, 9, 5);
+        if (_description.Text != displayedDescription) _description.Text = displayedDescription;
+        var request = GetRequest(out var error);
+        _dateHint.Text = _dateUnavailable.Checked ? "Prints as 0000" : int.TryParse(_month.Text, out var month) && int.TryParse(_year.Text, out var year) && month is >= 1 and <= 12 && year is >= 2000 and <= 2099
+            ? $"Prints as {month:00}{year % 100:00}" : "";
+        if (_templateError is not null) error = _templateError;
+        if (isExpensive && _expensiveTemplateError is not null) error = _expensiveTemplateError;
+        if (request is not null && _jobRenderer is not null)
+        {
+            try
+            {
+                _ = _jobRenderer.Render(request, isExpensive);
+                if (!_dryRun.Checked)
+                {
+                    if (_printer.SelectedItem is not string queue) error = _printerError ?? "Select an installed printer queue.";
+                    else error = _jobRenderer.ValidateProduction(request, _config.Printer, queue, isExpensive).FirstOrDefault();
+                }
+            }
+            catch (Exception e) when (e is ArgumentException or InvalidOperationException or InvalidDataException) { error = e.Message; }
+        }
+        _validation.Text = error ?? (isExpensive ? (_dryRun.Checked ? "Dry run saves 2 labels: component + expensive item." : "Ready to submit 2 labels: component + expensive item.") : (_dryRun.Checked ? "Dry run saves one label to a ZPL file." : "Ready to submit one sticker."));
+        _toolTip.SetToolTip(_validation, _validation.Text);
+        _toolTip.SetToolTip(_pn, _pn.Text);
+        _toolTip.SetToolTip(_mpn, _session.Selected?.Mpn);
+        _toolTip.SetToolTip(_description, displayedDescription);
+        _print.Text = _submitting ? "Submitting…" : (_dryRun.Checked ? "&Save dry run" : "&Print sticker") + (isExpensive ? " (2 labels)" : "");
+        _print.Enabled = !_submitting && error is null && request is not null && _renderer is not null;
+        _refresh.Enabled = !_repository.IsRefreshing && !_config.SampleMode;
+    }
+    private async Task RefreshAsync()
+    {
+        if (_config.SampleMode) { ShowSuggestions(); UpdateFooter(); return; }
+        var refresh = _repository.RefreshAsync(_closing.Token);
+        UpdateValidation(); UpdateFooter();
+        await refresh;
+        if (IsDisposed || _closing.IsCancellationRequested) return;
+        if (!_session.Revalidate(_repository.Components)) _jobStatus.Text = "The selected PN/MPN pairing was removed from the database. Select a component again.";
+        ShowSuggestions(); UpdateValidation(); UpdateFooter();
+    }
+    private void UpdateFooter()
+    {
+        if (_config.SampleMode)
+        {
+            _syncIndicator.ForeColor = Color.FromArgb(219, 144, 14);
+            _syncStatus.Text = "Sample database · offline demo";
+            _toolTip.SetToolTip(_syncStatus, "Sample data only. Online refresh and production printing are disabled.");
+            return;
+        }
+        var last = _repository.LastSuccessfulSyncUtc;
+        var age = last is null ? "never" : $"{last.Value.LocalDateTime:g} ({Math.Max(0, (int)(DateTimeOffset.UtcNow - last.Value).TotalMinutes)} min ago)";
+        var left = _repository.NextRefreshUtc - DateTimeOffset.UtcNow;
+        var next = _repository.IsRefreshing ? "refreshing…" : $"next in {Math.Max(0, (int)left.TotalMinutes):00}:{Math.Max(0, left.Seconds):00}";
+        _syncIndicator.ForeColor = _repository.LastError is not null ? Color.FromArgb(219, 144, 14) : last is not null ? Color.FromArgb(39, 160, 80) : Color.Gray;
+        _syncStatus.Text = _repository.LastError is not null
+            ? $"Offline · cache {(last is null ? "unavailable" : Math.Max(0, (int)(DateTimeOffset.UtcNow - last.Value).TotalMinutes) + "m old")} · {next}"
+            : last is null ? $"Database not synced · {next}" : $"Database synced {last.Value.LocalDateTime:HH:mm} · {next}";
+        _toolTip.SetToolTip(_syncStatus, $"{_repository.Components.Count} pairings. Last successful sync: {age}." + (_repository.LastError is null ? "" : $"\n{_repository.LastError}"));
+    }
+    private async Task SubmitAsync()
+    {
+        if (_submitting) return;
+        _session.Revalidate(_repository.Components);
+        UpdateValidation(); if (!_print.Enabled) return;
+        var request = GetRequest(out _)!; var dryRun = _dryRun.Checked; var queue = _printer.SelectedItem as string;
+        var isExpensive = _session.Selected!.IsExpensive;
+        _submitting = true; UpdateValidation();
+        try
+        {
+            if (dryRun)
+            {
+                var rendered = _jobRenderer!.Render(request, isExpensive);
+                Directory.CreateDirectory(_paths.DryRunDirectory);
+                var file = Path.Combine(_paths.DryRunDirectory, $"label-{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.zpl");
+                await File.WriteAllBytesAsync(file, rendered.Bytes, _closing.Token);
+                _jobStatus.Text = $"Saved {rendered.LabelCount} label(s): " + file;
+            }
+            else
+            {
+                var rendered = _jobRenderer!.RenderProduction(request, _config.Printer, queue!, isExpensive);
+                var submission = await new RawPrinterTransport().SendAsync(queue!, rendered.Bytes, _closing.Token);
+                _jobStatus.Text = $"Sent to printer • job {submission.JobId}. Spooler accepted {rendered.LabelCount} label(s); check the physical output.";
+            }
+        }
+        catch (Exception e) { _jobStatus.Text = (dryRun ? "Dry run failed: " : "Submission failed or uncertain. Check the printer before retrying: ") + e.Message; }
+        finally { _submitting = false; if (!IsDisposed) UpdateValidation(); }
+    }
+    private async Task CheckReleaseAsync()
+    {
+        if (_checkingRelease || _config.SampleMode) { _nextReleaseCheck = DateTimeOffset.UtcNow.AddMinutes(30); return; }
+        _checkingRelease = true; _nextReleaseCheck = DateTimeOffset.UtcNow.AddMinutes(30);
+        try
+        {
+            var client = new GitHubReleaseClient(_http, _config.GitHubOwner, _config.GitHubRepository, _config.PackagePrefix);
+            var release = await client.GetLatestReleaseAsync(_closing.Token);
+            if (!IsDisposed && release is not null && SemanticVersion.TryParse(_version, out var installed) && release.Version.CompareTo(installed) > 0)
+            {
+                _updateStatus.Text = "Update available";
+                _toolTip.SetToolTip(_updateStatus, "Close the app, then use its desktop shortcut to install the update.");
+            }
+        }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidDataException or System.Text.Json.JsonException or ArgumentException) { /* Optional release lookup must not disrupt work. */ }
+        finally { _checkingRelease = false; }
+    }
+    private void OnClosing(object? sender, FormClosingEventArgs e)
+    {
+        if (_submitting) { e.Cancel = true; _jobStatus.Text = "Wait for the current submission to finish before closing."; return; }
+        _timer.Stop(); _closing.Cancel();
+        try
+        {
+            var bounds = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+            var scale = DeviceDpi / 96f;
+            _settings.WindowWidth = (int)((bounds.Width - (Width - ClientSize.Width)) / scale);
+            _settings.WindowHeight = (int)((bounds.Height - (Height - ClientSize.Height)) / scale);
+            _settings.WindowX = bounds.X; _settings.WindowY = bounds.Y; _settings.WindowMaximized = WindowState == FormWindowState.Maximized;
+            _settings.LastPrinterName = _printer.SelectedItem as string ?? _settings.LastPrinterName;
+            _settings.SearchMode = _oepsMode.Checked ? SearchMode.OepsPn : SearchMode.Mpn;
+            _settings.ExtendedDescription = _extendedDescription.Checked;
+            _settings.Save(_paths.SettingsFile);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { MessageBox.Show(this, "Could not save preferences: " + ex.Message, Text); }
+    }
+    private async Task RunUiSmokeAsync()
+    {
+        _timer.Stop();
+        var report = new List<string>();
+        try
+        {
+            if (!_config.SampleMode) throw new InvalidOperationException("UI smoke requires --sample.");
+            _search.Text = "OEPS101234";
+            if (_suggestions.Items.Count < 2) throw new Exception("Multiple MPN suggestions missing.");
+            if (!_suggestions.Visible) throw new Exception("Typing did not open the autocomplete dropdown.");
+            SearchKeyDown(_search, new KeyEventArgs(Keys.Down));
+            if (!_suggestions.Visible || Controls.GetChildIndex(_suggestions) != 0 || !ClientRectangle.Contains(_suggestions.Bounds))
+                throw new Exception("Autocomplete is not above the form fields and within the window.");
+            Directory.CreateDirectory(_paths.UserDataRoot);
+            using (var autocomplete = CaptureWindow()) autocomplete.Save(Path.Combine(_paths.UserDataRoot, "ui-smoke-autocomplete.png"));
+            SearchKeyDown(_search, new KeyEventArgs(Keys.Escape));
+            if (_suggestions.Visible || _session.Selected is not null) throw new Exception("Escape did not dismiss the suggestions without selection.");
+            SearchKeyDown(_search, new KeyEventArgs(Keys.Down));
+            SearchKeyDown(_search, new KeyEventArgs(Keys.Enter));
+            if (_suggestions.Visible) throw new Exception("Selecting a component did not close the dropdown.");
+            report.Add("PASS autocomplete opens while typing, supports arrows/Enter, and dismisses with Escape or selection");
+            _year.Text = "2026"; _month.SelectedItem = "09"; _quantity.Text = "42";
+            if (!_print.Enabled) throw new Exception("Valid sample dry run is disabled: " + _validation.Text);
+            if (_pn.Text != "OEPS101234 - EXPENSIVE ITEM💰") throw new Exception("The expensive-item suffix is missing from the OEPS PN display.");
+            if (_jobRenderer!.Render(GetRequest(out _)!, _session.Selected!.IsExpensive).LabelCount != 2) throw new Exception("An expensive component must generate two labels.");
+            report.Add("PASS expensive-item display suffix and two-label dry-run job");
+            await SubmitAsync();
+            if (!Directory.EnumerateFiles(_paths.DryRunDirectory, "*.zpl").Any()) throw new Exception("Dry run file missing.");
+            report.Add("PASS explicit pairing selection, date/quantity entry and dry-run file generation");
+            await RefreshAsync();
+            if (_year.Text != "2026" || _month.Text != "09" || _quantity.Text != "42") throw new Exception("Refresh erased entries.");
+            _search.Text += "x";
+            if (_session.Selected is not null || _print.Enabled) throw new Exception("Search edit retained stale selection.");
+            report.Add("PASS refresh preserves form entries; editing search invalidates selection");
+            if (_dryRun.Enabled) throw new Exception("Sample mode permits production.");
+            report.Add("PASS sample production lock");
+            _search.Text = "OEPS101234"; ShowSuggestions(); _suggestions.SelectedIndex = 0; SelectSuggestion();
+            if (_dateHint.Text != "Prints as 0926") throw new Exception("Inline reception date hint is inconsistent.");
+            _dateUnavailable.Checked = true;
+            await RefreshAsync();
+            if (!_dateUnavailable.Checked || _month.Enabled || _year.Enabled || _dateHint.Text != "Prints as 0000" || !_print.Enabled)
+                throw new Exception("Unavailable reception date UI or refresh behavior is incorrect.");
+            if (_renderer!.Render(GetRequest(out _)!).DateMmyy != "0000") throw new Exception("Unavailable date did not reach the renderer.");
+            await SubmitAsync();
+            _dateUnavailable.Checked = false;
+            if (!_month.Enabled || !_year.Enabled || _month.Text != "09" || _year.Text != "2026" || _dateHint.Text != "Prints as 0926")
+                throw new Exception("Toggling date availability did not preserve the entered date.");
+            report.Add("PASS unavailable date prints 0000, survives refresh, and restores entered date when unchecked");
+            var originalSelection = _session.Selected!;
+            _session.Select(originalSelection with { Description = "Crystal [package information] [stock]" });
+            UpdateValidation();
+            if (_description.Text != "Crystal" || _description.Font.SizeInPoints != _mpn.Font.SizeInPoints || _description.Multiline)
+                throw new Exception("Short description must stop before the first bracket and match the identifier font.");
+            _extendedDescription.Checked = true;
+            if (_description.Text != "Crystal [package information] [stock]" || !_description.Font.Equals(_mpn.Font) || _description.Multiline || _description.ScrollBars != ScrollBars.None)
+                throw new Exception("Extended description must preserve the complete text in a single line without scrollbars and match the identifier font.");
+            _extendedDescription.Checked = false;
+            _session.Select(originalSelection); UpdateValidation();
+            report.Add("PASS short/full description toggle, bracket trimming and exact font sizes");
+            _jobStatus.Text = "";
+            using var screenshot = CaptureWindow();
+            Directory.CreateDirectory(_paths.UserDataRoot); screenshot.Save(Path.Combine(_paths.UserDataRoot, "ui-smoke.png"));
+        }
+        catch (Exception ex) { report.Add("FAIL " + ex); Environment.ExitCode = 1; }
+        finally { Directory.CreateDirectory(_paths.UserDataRoot); await File.WriteAllLinesAsync(Path.Combine(_paths.UserDataRoot, "ui-smoke.txt"), report); Close(); }
+    }
+    private Bitmap CaptureWindow()
+    {
+        var screenshot = new Bitmap(Width, Height);
+        DrawToBitmap(screenshot, new Rectangle(0, 0, Width, Height));
+        // DrawToBitmap does not preserve overlapping child-window paint order. Capture the
+        // visible native dropdown separately at its actual client position for smoke artifacts.
+        if (_suggestions.Visible)
+        {
+            using var dropdown = new Bitmap(_suggestions.Width, _suggestions.Height);
+            _suggestions.DrawToBitmap(dropdown, new Rectangle(Point.Empty, dropdown.Size));
+            var clientOffset = PointToScreen(Point.Empty);
+            using var graphics = Graphics.FromImage(screenshot);
+            graphics.DrawImageUnscaled(dropdown, _suggestions.Left + clientOffset.X - Left, _suggestions.Top + clientOffset.Y - Top);
+        }
+        return screenshot;
+    }
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) { _timer.Dispose(); _toolTip.Dispose(); _closing.Cancel(); _closing.Dispose(); }
+        base.Dispose(disposing);
+    }
+    private sealed record Suggestion(Component Component)
+    {
+        public string DisplayOepsPn => Component.OepsPn + (Component.IsExpensive ? " 💰" : "");
+        public override string ToString() => $"{DisplayOepsPn}   |   {Component.Mpn}";
+    }
+}

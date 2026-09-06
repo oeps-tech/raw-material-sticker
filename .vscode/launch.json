@@ -1,0 +1,7 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    { "name": "OEPS — live data, dry run", "type": "coreclr", "request": "launch", "preLaunchTask": "build", "program": "${workspaceFolder}/src/Oeps.RawMaterialSticker.App/bin/Debug/net10.0-windows/Oeps.RawMaterialSticker.App.dll", "cwd": "${workspaceFolder}", "args": ["--dry-run"] },
+    { "name": "OEPS — sample data", "type": "coreclr", "request": "launch", "preLaunchTask": "build", "program": "${workspaceFolder}/src/Oeps.RawMaterialSticker.App/bin/Debug/net10.0-windows/Oeps.RawMaterialSticker.App.dll", "cwd": "${workspaceFolder}", "args": ["--sample"] }
+  ]
+}

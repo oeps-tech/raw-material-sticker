@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RollForward>LatestPatch</RollForward>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Oeps.RawMaterialSticker.Core/Oeps.RawMaterialSticker.Core.csproj" />
+    <Content Include="../../appsettings.json" Link="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
