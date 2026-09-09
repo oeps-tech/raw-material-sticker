@@ -4,10 +4,32 @@ using Oeps.RawMaterialSticker.Core.Configuration;
 namespace Oeps.RawMaterialSticker.Core.Printing;
 
 public sealed record RenderedPrintJob(byte[] Bytes, int LabelCount);
+public sealed record RoutedLabel(string Name, string Queue, byte[] Bytes);
 
 /// <summary>Build every required format before one RAW submission, so failures cannot silently omit the extra label.</summary>
 public sealed class LabelJobRenderer(LabelRenderer normal, ExpensiveLabelRenderer? expensive)
 {
+    public IReadOnlyList<RoutedLabel> RenderProfiles(LabelRequest request, PrinterConfiguration primary, string selectedQueue,
+        PrinterConfiguration extra, bool isExpensive, bool production)
+    {
+        var extraQueue = extra.UseSelectedPrinter ? selectedQueue : extra.QueueName;
+        var errors = production ? ProductionGuard.Validate(primary, selectedQueue, normal, request).ToList() : new List<string>();
+        if (isExpensive)
+        {
+            if (expensive is null) throw new InvalidOperationException("L3 expensive template is unavailable.");
+            if (string.IsNullOrWhiteSpace(extraQueue)) throw new InvalidOperationException("Configure the L3 expensive printer queue.");
+            if (production) errors.AddRange(ProductionGuard.Validate(extra, extraQueue, normal, request, expensive.TemplateSha256)
+                .Select(error => "L3 expensive: " + error));
+        }
+        if (errors.Count != 0) throw new InvalidOperationException(string.Join(Environment.NewLine, errors));
+        var labels = new List<RoutedLabel>
+        {
+            new("L3", selectedQueue, Encoding.ASCII.GetBytes(LabelPrinterSetup.Apply(normal.Render(request).Zpl, primary)))
+        };
+        if (isExpensive) labels.Add(new("L3 expensive", extraQueue!, Encoding.ASCII.GetBytes(LabelPrinterSetup.Apply(expensive!.Render(request), extra))));
+        return labels;
+    }
+
     public RenderedPrintJob Render(LabelRequest request, bool isExpensive) =>
         Combine(normal.Render(request).Zpl, request, isExpensive);
 

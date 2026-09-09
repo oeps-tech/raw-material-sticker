@@ -16,14 +16,16 @@ internal static class Program
             var config = AppConfiguration.Load(AppContext.BaseDirectory, paths.UserDataRoot);
             if (args.Contains("--sample")) { config.SampleMode = true; config.DryRun = true; }
             if (args.Contains("--dry-run")) config.DryRun = true;
+            if (args.Contains("--printer-test") && !config.SampleMode) config.DryRun = false;
             MainForm? form = null;
-            using var instance = AppInstanceCoordinator.TryAcquire(() =>
+            var isolatedSmoke = config.SampleMode && args.Contains("--ui-smoke");
+            using var instance = isolatedSmoke ? null : AppInstanceCoordinator.TryAcquire(() =>
             {
                 if (form is not { IsHandleCreated: true, IsDisposed: false }) return;
                 try { form.BeginInvoke(() => { if (form.WindowState == FormWindowState.Minimized) form.WindowState = FormWindowState.Normal; form.Show(); form.Activate(); }); }
                 catch (InvalidOperationException) { }
             });
-            if (instance is null) return;
+            if (instance is null && !isolatedSmoke) return;
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(40) };
             form = new MainForm(config, paths, http, args);
             Application.Run(form);

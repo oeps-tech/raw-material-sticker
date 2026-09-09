@@ -21,7 +21,7 @@ jobs:
       - name: Set version
         shell: pwsh
         run: |
-          $version = '0.1.1'
+          $version = '0.1.4'
           if ($env:GITHUB_REF_TYPE -eq 'tag') {
             $version = $env:GITHUB_REF_NAME -replace '^v', ''
             if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Only stable semantic-version tags can be released.' }
@@ -36,6 +36,7 @@ jobs:
           name: OEPS-Windows-${{ env.OEPS_VERSION }}
           path: |
             artifacts/*.zip
+            artifacts/*.msi
             artifacts/*.sha256
           if-no-files-found: error
 
@@ -46,6 +47,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: OEPS-Windows-*
@@ -58,5 +60,5 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           $assets = Get-ChildItem -LiteralPath release-files -File | ForEach-Object FullName
-          gh release create $env:GITHUB_REF_NAME --verify-tag --title "OEPS Raw Material Sticker $env:GITHUB_REF_NAME" --generate-notes @assets
+          gh release create $env:GITHUB_REF_NAME --verify-tag --title "OEPS Raw Material Sticker $env:GITHUB_REF_NAME" --notes-file docs/release-notes.md @assets
           if ($LASTEXITCODE -ne 0) { throw 'GitHub Release publication failed.' }

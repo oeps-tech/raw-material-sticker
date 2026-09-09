@@ -4,7 +4,7 @@ namespace Oeps.RawMaterialSticker.Core.Printing;
 
 public static class ProductionGuard
 {
-    public static IReadOnlyList<string> Validate(PrinterConfiguration printer, string selectedQueue, LabelRenderer renderer, LabelRequest request)
+    public static IReadOnlyList<string> Validate(PrinterConfiguration printer, string selectedQueue, LabelRenderer renderer, LabelRequest request, string? templateHash = null)
     {
         ArgumentNullException.ThrowIfNull(printer);
         ArgumentNullException.ThrowIfNull(renderer);
@@ -14,9 +14,11 @@ public static class ProductionGuard
             errors.Add("Production printing is locked until the actual printer and label have been validated. Dry runs remain available.");
         if (string.IsNullOrWhiteSpace(printer.Model) || printer.Dpi is not (152 or 203 or 300 or 305 or 600) || string.IsNullOrWhiteSpace(printer.Connection))
             errors.Add("Configure the actual Zebra model, supported DPI, and connection before production printing.");
-        if (string.IsNullOrWhiteSpace(selectedQueue) || !string.Equals(printer.QueueName, selectedQueue, StringComparison.OrdinalIgnoreCase))
-            errors.Add("Select the exact Windows printer queue recorded in the validated printer configuration.");
-        if (!string.Equals(printer.ValidatedTemplateSha256, renderer.TemplateSha256, StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(selectedQueue))
+            errors.Add("Select an installed Windows printer.");
+        else if (!printer.UseSelectedPrinter && !string.Equals(printer.QueueName, selectedQueue, StringComparison.OrdinalIgnoreCase))
+            errors.Add("Select the Windows printer queue configured for this label.");
+        if (!string.Equals(printer.ValidatedTemplateSha256, templateHash ?? renderer.TemplateSha256, StringComparison.OrdinalIgnoreCase))
             errors.Add("The label template SHA-256 does not match the physically validated template.");
         if (printer.PrintSpeedIps is null or < 1 or > 14 || printer.Darkness is null or < 0 or > 30)
             errors.Add("Configure the model-supported print speed (1–14 IPS) and darkness (0–30). Their suitability must be physically validated.");
@@ -27,9 +29,9 @@ public static class ProductionGuard
         try
         {
             _ = renderer.Render(request);
-            if (string.IsNullOrWhiteSpace(printer.LongestValidatedOepsPn))
+            if (printer.RequireTestedPnLimit && string.IsNullOrWhiteSpace(printer.LongestValidatedOepsPn))
                 errors.Add("Record the longest/widest OEPS PN physically printed and scanned in LongestValidatedOepsPn.");
-            else
+            else if (!string.IsNullOrWhiteSpace(printer.LongestValidatedOepsPn))
             {
                 _ = renderer.Render(request with { OepsPn = printer.LongestValidatedOepsPn });
                 if (Code128Encoder.Encode(request.OepsPn).WidthWithQuietZonesDots() > Code128Encoder.Encode(printer.LongestValidatedOepsPn).WidthWithQuietZonesDots()

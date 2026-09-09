@@ -23,6 +23,8 @@ public sealed class ExpensiveLabelRenderer
     {
         // The same component validity, escaping and PN barcode geometry apply to both designs.
         _ = new LabelRenderer(LabelRenderer.BuiltInTemplate).Render(request);
+        if (Code128Encoder.Encode(request.OepsPn).BarWidthDots() + 30 > 480)
+            throw new ArgumentException("OEPS PN exceeds the L3 expensive barcode area including its quiet zone.");
         var fields = new Dictionary<string, string>
         {
             ["OEPS_PN_text"] = LabelValues.FormatOepsPn(request.OepsPn),

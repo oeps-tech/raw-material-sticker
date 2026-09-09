@@ -202,7 +202,7 @@ public static class DataTests
         Assert.Equal("Zebra", config.Printer.Model);
         Assert.Equal<int?>(300, config.Printer.Dpi);
         Assert.True(config.SampleMode);
-        Assert.True(config.DryRun);
+        Assert.False(config.DryRun);
         Assert.False(config.Printer.ProductionValidated);
         var paths = new AppPaths(user.Path);
         new UserSettings { LastPrinterName = "Queue A", SearchMode = SearchMode.Mpn, WindowWidth = 820 }.Save(paths.SettingsFile);

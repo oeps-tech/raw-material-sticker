@@ -35,7 +35,7 @@ public static class ExpensiveTests
         Assert.True(repository.HasExpensiveData);
         Assert.Equal(2, repository.Components.Count(c => c.IsExpensive));
         Assert.False(repository.Components.Single(c => c.OepsPn == "OEPS-0012").IsExpensive);
-        var session = new OperationSession { Month = "09", Year = "2026", Quantity = "42", DateUnavailable = true };
+        var session = new OperationSession { Month = "09", Year = "2026", Quantity = "42", MonthUnavailable = true, YearUnavailable = true };
         session.Select(repository.Components[0]);
         var previous = File.ReadAllBytes(paths.CacheFile);
         var stamp = repository.LastSuccessfulSyncUtc;
@@ -58,7 +58,7 @@ public static class ExpensiveTests
         Assert.True(session.Revalidate(repository.Components));
         Assert.False(session.Selected!.IsExpensive);
         Assert.Equal("42", session.Quantity);
-        Assert.True(session.DateUnavailable);
+        Assert.True(session.MonthUnavailable && session.YearUnavailable);
     }
 
     [Test]
@@ -81,7 +81,7 @@ public static class ExpensiveTests
         var normal = new LabelRenderer(LabelRenderer.BuiltInTemplate);
         var expensive = new ExpensiveLabelRenderer(ExpensiveLabelRenderer.BuiltInTemplate);
         var renderer = new LabelJobRenderer(normal, expensive);
-        var request = new LabelRequest("OEPS-0012", "MPN^FS^XZ", 9, 2026, 100, DateUnavailable: true);
+        var request = new LabelRequest("OEPS-0012", "MPN^FS^XZ", 9, 2026, 100, MonthUnavailable: true, YearUnavailable: true);
         var ordinary = renderer.Render(request, false);
         Assert.Equal(1, ordinary.LabelCount);
         Assert.Equal(1, Regex.Matches(Encoding.ASCII.GetString(ordinary.Bytes), @"\^XA").Count);
@@ -92,7 +92,7 @@ public static class ExpensiveTests
         Assert.Equal(2, Regex.Matches(zpl, @"\^XZ").Count);
         Assert.Equal(2, Regex.Matches(zpl, @"\^PQ1,0,1,Y").Count);
         var pnField = "^FD" + LabelValues.EscapeField(Code128Encoder.Encode(request.OepsPn).ZplFieldData) + "^FS";
-        Assert.Equal(2, Regex.Matches(zpl, Regex.Escape(pnField)).Count);
+        Assert.Equal(1, Regex.Matches(zpl, Regex.Escape(pnField)).Count);
         var mpnField = "^FD" + LabelValues.EscapeField(request.Mpn) + "^FS";
         Assert.Equal(2, Regex.Matches(zpl, Regex.Escape(mpnField)).Count);
         Assert.True(zpl.Contains("^FD" + LabelValues.EscapeField("0000") + "^FS"));
@@ -116,7 +116,7 @@ public static class ExpensiveTests
         var renderer = new LabelJobRenderer(normal, expensive);
         var config = new PrinterConfiguration
         {
-            Model = "TEST ONLY", Dpi = 203, Connection = "TEST ONLY", QueueName = "TEST QUEUE",
+            Model = "TEST ONLY", Dpi = 300, Connection = "TEST ONLY", QueueName = "TEST QUEUE",
             ProductionValidated = true, ValidatedTemplateSha256 = normal.TemplateSha256,
             PrintSpeedIps = 4, Darkness = 25, MediaTracking = "web", PrintMethod = "thermal-transfer",
             LongestValidatedOepsPn = "OEPS070051", ValidationNotes = "Synthetic test, not physical validation."

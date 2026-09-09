@@ -4,14 +4,14 @@ Windows Forms application for selecting an OEPS PN–MPN pairing from the public
 
 ## Try it in this repository
 
-Double-click **Run.cmd**. The current workspace has a local .NET 10 SDK under `.tools/dotnet`; the script uses it when present. The script starts the built Release app in **dry-run mode** with the real public spreadsheet. After source changes, rebuild using the commands below: Run.cmd reuses an existing Release build.
+Double-click **Run.cmd**. The current workspace has a local .NET 10 SDK under `.tools/dotnet`; the script uses it when present. The script starts the built Release app in normal printing mode with the real public spreadsheet. After source changes, rebuild using the commands below: Run.cmd reuses an existing Release build.
 
 ```powershell
 .\Run.cmd
 .\Run.cmd --sample
 ```
 
-The compact form keeps the printer, search mode, component, selected OEPS PN/MPN, reception date and quantity together. Suggestions open beneath the component field while typing; use Down/Up and Enter or click a suggestion to select its exact PN/MPN pairing. The date row shows the resulting printed MMYY. Enter a positive quantity, then select **Save dry run**. The status shows the saved `.zpl` path. A printer is unnecessary for a dry run. Sample mode is explicitly marked and permanently disables production for that session.
+The compact form keeps the printer, search mode, component, selected OEPS PN/MPN, reception date and quantity together. Suggestions open beneath the component field while typing; use Down/Up and Enter or click a suggestion to select its exact PN/MPN pairing. The lot row shows MMYY_PACK_RAND. Enter a quantity (zero means unavailable), then select **Save dry run** in sample mode. See [lot and quantity rules](docs/lot-format.md) for packaging, partial dates, decimal quantities and barcode padding. The status shows the saved `.zpl` path. A printer is unnecessary for a dry run. Sample mode is explicitly marked and permanently disables production for that session.
 
 `--data-dir <absolute-directory>` isolates cache, settings and dry runs for testing. Normal use stores them in `%LOCALAPPDATA%\OEPS\RawMaterialSticker`. For example, `Run.cmd --sample --data-dir C:\path\to\repo\.local\demo` keeps the demonstration's generated data inside this repository. The application never writes receptions, inventory or print records to Google Sheets.
 
@@ -44,7 +44,7 @@ dotnet run --project src/Oeps.RawMaterialSticker.App -c Release -- --sample --ui
 dotnet run --project tests/Oeps.RawMaterialSticker.Tests -c Release -- --verify-package artifacts/Oeps.RawMaterialSticker-0.1.0-win-x64.zip .local/package-check
 ```
 
-The UI check opens a hidden sample window, saves a ZPL job, checks input behavior, writes `ui-smoke.txt` and `ui-smoke.png`, then closes. Close an already-running OEPS instance before running it: single-instance protection applies to test runs too. Package verification checks the real ZIP, launches its app, waits for its ready signal and records the working version. No physical print is issued. See [manual checks](docs/manual-verification.md) for hardware and Windows behavior that automation cannot establish.
+The UI check opens a hidden sample window, saves a ZPL job, checks input behavior, writes `ui-smoke.txt` and `ui-smoke.png`, then closes. Sample UI smoke checks run in isolation; packaged integration checks still require the operator app to be closed. Package verification checks the real ZIP, launches its app, waits for its ready signal and records the working version. No physical print is issued. See [manual checks](docs/manual-verification.md) for hardware and Windows behavior that automation cannot establish.
 
 ## Spreadsheet and cache
 
@@ -93,20 +93,20 @@ The app reports **Sent to printer** only after spooler submission succeeds. That
 
 ## Build an installer and update package
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1 -Version 0.1.0
-```
+Run `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1 -Version 0.1.2` on a build machine with the .NET 10 SDK and Desktop Runtime. WiX 4.0.6 is installed into `.tools/wix` on first use. PowerShell is used only by developers/CI to build the packages.
 
-The script builds and runs the tests, publishes framework-dependent Windows x64 app/launcher binaries, includes templates and original label sources, and creates:
+Release files:
 
-- `artifacts/Oeps.RawMaterialSticker-0.1.0-win-x64.zip` and `.zip.sha256`: ordinary app update.
-- `artifacts/Oeps.RawMaterialSticker-0.1.0-setup-win-x64.zip` and `.zip.sha256`: initial installer bundle.
+- `Oeps.RawMaterialSticker-0.1.2-setup-win-x64.msi` plus `.msi.sha256`: Windows installer, including a private .NET 10 runtime.
+- `Oeps.RawMaterialSticker-0.1.2-win-x64.zip` plus `.zip.sha256`: small app update package consumed by the launcher.
 
-Staging remains under `artifacts/package-<unique-id>` for inspection. Existing versioned artifacts are not overwritten. Package generation requires no external dependencies beyond the SDK's framework/runtime targeting assets; publishing may restore those assets from Microsoft's NuGet source.
+Double-click the MSI on the target computer. It installs for the current Windows user, registers in Windows Installed apps, and creates desktop and Start menu shortcuts pointing directly to `Oeps.RawMaterialSticker.Launcher.exe`. No PowerShell or runtime download runs during installation or normal startup. The launcher installs the bundled app on its first start and keeps the existing online update check and Update now / Not now prompt.
 
-On another PC, extract the **entire setup ZIP**, then run **Install.cmd**. It installs per-user shortcuts and a separate launcher under application data. The shortcut targets Windows PowerShell's native bootstrap, which runs before .NET 10 is available. On each start it detects the x64 .NET 10 Desktop Runtime; if absent it offers a per-user installation from official Microsoft metadata and verifies the runtime archives' SHA-512. It installs both the base runtime/host and Desktop Runtime. No administrator account is required. A refused or failed installation displays a useful error and can be retried by starting the shortcut again. Environments that prohibit unsigned PowerShell scripts can deploy the Microsoft Desktop Runtime through IT and review/sign these bootstrap scripts.
+Install the MSI once over an older ZIP-based installation to replace its PowerShell shortcuts. Existing preferences, component cache and installed app versions remain in `%LOCALAPPDATA%\OEPS\RawMaterialSticker`. Old pinned taskbar shortcuts may need to be unpinned and replaced with the new shortcut.
 
-The SDK and normal update packages do **not** bundle .NET. The one-time runtime download is larger; subsequent ordinary app updates are small. A private runtime is **not automatically serviced by this app**. Prefer an IT-managed system Desktop Runtime for normal security patch servicing, or periodically update/reinstall the private runtime using Microsoft's documented process. Future .NET-major or architecture changes are rejected by the old launcher with an instruction to use the new full installer; the previous app remains available. A new major release must ship an updated native bootstrap and launcher. Launcher/bootstrap changes also require the full installer.
+The installer-managed launcher and runtime are under `%LOCALAPPDATA%\OEPS Raw Material Sticker Installer`. Windows uninstall removes these files and shortcuts; it preserves the separate preferences/cache/version history. Delete the data folder manually if a complete data reset is wanted. New MSI versions upgrade the launcher and private runtime. Ordinary app updates do not service that runtime, so ship a new MSI when updating it.
+
+Packages are unsigned until a signing certificate is configured. MSI removes the PowerShell dependency; acceptance by Bitdefender must still be checked on the affected computer.
 
 ## Software releases and recovery
 

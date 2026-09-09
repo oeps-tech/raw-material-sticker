@@ -34,7 +34,8 @@ public static class PrintingTests
         Assert.Throws<ArgumentOutOfRangeException>(() => LabelValues.FormatDate(13, 2026));
         Assert.Throws<ArgumentOutOfRangeException>(() => LabelValues.FormatDate(9, 26));
         Assert.Throws<ArgumentOutOfRangeException>(() => LabelValues.FormatDate(9, 2100));
-        Assert.Throws<ArgumentOutOfRangeException>(() => LabelValues.FormatQuantity(0));
+        Assert.Equal("", LabelValues.FormatQuantity(0));
+        Assert.True(Renderer().Render(Request() with { Quantity = 0 }).Zpl.Contains("^FD^FS"));
         Assert.Throws<ArgumentOutOfRangeException>(() => LabelValues.FormatQuantity(-1));
     }
 
@@ -42,13 +43,13 @@ public static class PrintingTests
     public static void UnavailableDateUsesFourZerosForTextAndBarcode()
     {
         var request = Request();
-        foreach (var unavailable in new[] { request with { DateUnavailable = true }, request with { DateUnavailable = true, Month = 0, Year = 0 } })
+        foreach (var unavailable in new[] { request with { MonthUnavailable = true, YearUnavailable = true }, request with { MonthUnavailable = true, YearUnavailable = true, Month = 0, Year = 0 } })
         {
             var rendered = Renderer().Render(unavailable);
             var fields = Fields(rendered.Zpl);
             Assert.Equal("0000", rendered.DateMmyy);
-            Assert.Equal("0000", fields[6]);
-            Assert.Equal("0000", DecodeCode128(fields[3]));
+            Assert.Equal("0000", fields[2]);
+            Assert.Equal("LA,0000_OTHR_0000", fields[7]);
             Assert.True(rendered.Zpl.Contains("^PQ1,0,1,Y"));
         }
         Assert.Equal("0926", Renderer().Render(request).DateMmyy);
@@ -87,14 +88,15 @@ public static class PrintingTests
         {
             var result = Renderer().Render(Request(input));
             var fields = Fields(result.Zpl);
-            Assert.Equal(input, DecodeCode128(fields[0]));
-            Assert.Equal(LabelValues.FormatOepsPn(input), fields[1]);
-            Assert.Equal(Request().Mpn, fields[2]);
-            Assert.Equal("0926", DecodeCode128(fields[3]));
-            Assert.Equal("Date:", fields[4]);
-            Assert.Equal("Qty:", fields[5]);
-            Assert.Equal("0926", fields[6]);
-            Assert.Equal("4", fields[7]);
+            Assert.Equal(input, fields[6]);
+            Assert.Equal(LabelValues.FormatOepsPn(input), fields[0]);
+            Assert.Equal(Request().Mpn, fields[1]);
+            Assert.Equal("0926", fields[2]);
+            Assert.Equal("4", fields[3]);
+            Assert.Equal("OTHR", fields[4]);
+            Assert.Equal("0000", fields[5]);
+            Assert.Equal("LA,0926_OTHR_0000", fields[7]);
+            Assert.Equal("0000004", fields[8]);
             Assert.Equal("0926", result.DateMmyy);
             Assert.Equal(input, result.BarcodePayload);
             Assert.True(result.Zpl.Contains("^PQ1,0,1,Y", StringComparison.Ordinal));
@@ -109,8 +111,8 @@ public static class PrintingTests
     {
         const string hostile = "Málaga^FS^XZ~JA\\26>{{MPN}}";
         var rendered = Renderer().Render(Request() with { Mpn = hostile, Quantity = 99 });
-        Assert.Equal(hostile, Fields(rendered.Zpl)[2]);
-        Assert.Equal("99", Fields(rendered.Zpl)[7]);
+        Assert.Equal(hostile, Fields(rendered.Zpl)[1]);
+        Assert.Equal("99", Fields(rendered.Zpl)[3]);
         Assert.Equal(1, Regex.Matches(rendered.Zpl, @"\^XA").Count);
         Assert.Equal(1, Regex.Matches(rendered.Zpl, @"\^XZ").Count);
         Assert.False(rendered.Zpl.Contains("~JA", StringComparison.Ordinal));
@@ -124,9 +126,9 @@ public static class PrintingTests
     public static void RotatedBarcodeFitReservesQuietZonesWithoutChangingLayout()
     {
         var result = Renderer().Render(Request("OEPS-AB1234"));
-        Assert.Equal(495, result.BarcodeWidthDots);
-        Assert.True(result.Zpl.Contains("^FT136,487^BCB,56,N,N,N,N", StringComparison.Ordinal));
-        Assert.True(result.Zpl.Contains("^FT241,228^BCB,56,N,N,N,N", StringComparison.Ordinal));
+        Assert.Equal(2, Regex.Matches(result.Zpl, @"\^BXB").Count);
+        Assert.True(result.Zpl.Contains("^FT226,560^BXB,7,200", StringComparison.Ordinal));
+        Assert.True(result.Zpl.Contains("^FT128,455^BQN,2,5", StringComparison.Ordinal));
         Assert.Throws<ArgumentException>(() => Renderer().Render(Request("OEPS123456789012")));
         Assert.Throws<ArgumentException>(() => new LabelRenderer(LabelRenderer.BuiltInTemplate.Replace("^PW354", "^PW900", StringComparison.Ordinal)));
         Assert.Throws<ArgumentException>(() => new LabelRenderer("~JA\n" + LabelRenderer.BuiltInTemplate));
@@ -145,7 +147,10 @@ public static class PrintingTests
         Assert.True(production.Zpl.Contains("^PQ1,0,1,Y", StringComparison.Ordinal));
         Assert.False(production.Zpl.Contains("^JUS", StringComparison.Ordinal));
         Assert.False(production.Zpl.Contains("~JA", StringComparison.Ordinal));
+        Assert.Equal(0, ProductionGuard.Validate(config, "OTHER QUEUE", renderer, Request()).Count);
+        config.UseSelectedPrinter = false;
         Assert.True(ProductionGuard.Validate(config, "OTHER QUEUE", renderer, Request()).Count > 0);
+        config.UseSelectedPrinter = true;
         Assert.True(ProductionGuard.Validate(config, "TEST QUEUE", renderer, Request("OEPS1234567890")).Count > 0);
         Assert.True(ProductionGuard.Validate(config, "TEST QUEUE", renderer, Request() with { Quantity = int.MaxValue }).Count > 0);
         Assert.True(ProductionGuard.Validate(config, "TEST QUEUE", renderer, Request() with { Mpn = new string('W', 35) }).Count > 0);
@@ -175,7 +180,7 @@ public static class PrintingTests
 
     private static PrinterConfiguration ValidatedTestConfiguration(LabelRenderer renderer) => new()
     {
-        Model = "TEST ONLY — no hardware validation claimed", Dpi = 203, Connection = "TEST ONLY",
+        Model = "TEST ONLY — no hardware validation claimed", Dpi = 300, Connection = "TEST ONLY",
         QueueName = "TEST QUEUE", ProductionValidated = true, ValidatedTemplateSha256 = renderer.TemplateSha256,
         PrintSpeedIps = 4, Darkness = 25, MediaTracking = "web", PrintMethod = "thermal-transfer",
         LongestValidatedOepsPn = "OEPS101234", ValidationNotes = "Synthetic unit-test configuration only."

@@ -1,0 +1,2 @@
+# Template validation hashes must be identical in local builds and CI releases.
+templates/*.zpl -text

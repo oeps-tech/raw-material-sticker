@@ -31,7 +31,11 @@ Tape > TAPE
 Bag > _BAG
 Box > _BOX
 Tray > TRAY
-Spool > Spool
+Spool > SPOL
 Other > OTHR
 
 RAND are four random letters (upper or lower case) or numbers.
+
+Fix: OEPS PN can have 12 or 13 characters.
+If using 12, L3 expensive 'OEPS_PN_text' and L3 'OEPS_PN' should be written as XXXX XX XXXX
+If using 13, L3 expensive 'OEPS_PN_text' and L3 'OEPS_PN' should be written as XXXX XXX XXXX
