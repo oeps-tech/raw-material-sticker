@@ -1,0 +1,37 @@
+=== L3 expensive ===
+
+OEPS_PN_barcode: Serial number without spaces
+OEPS_PN_text: Serial number in the format [1]
+MPN: Manufacturer part number
+
+=== L3 ===
+
+OEPS_PN_Datamatrix: Serial number without spaces
+OEPS_PN: Serial number in the format [1]
+MPN: Manufacturer part number
+OEPS_Lot_QR: Lot in the format [2]
+Lot_MMYY: Lot's MMYY
+Lot_Packing: Lot's Packaging (four chars)
+Lot_Random: Lot's Random (four chars)
+Quantity: Quantity (if decimal, use always a dot '.')
+OEPS_Quantity_Datamatrix: Quantity (append a '0' before the quantity) (if decimal, use always a dot '.')
+
+
+[1]
+If 10 chars: XXXX XX XXXX
+If 11 chars: XXXX XXX XXXX
+
+[2]
+MMYY_PACK_RAND
+
+PACK is mapped in this way:
+Reel > REEL
+Tube > TUBE
+Tape > TAPE
+Bag > _BAG
+Box > _BOX
+Tray > TRAY
+Spool > Spool
+Other > OTHR
+
+RAND are four random letters (upper or lower case) or numbers.
