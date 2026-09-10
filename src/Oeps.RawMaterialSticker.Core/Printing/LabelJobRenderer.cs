@@ -10,9 +10,14 @@ public sealed record RoutedLabel(string Name, string Queue, byte[] Bytes);
 public sealed class LabelJobRenderer(LabelRenderer normal, ExpensiveLabelRenderer? expensive)
 {
     public IReadOnlyList<RoutedLabel> RenderProfiles(LabelRequest request, PrinterConfiguration primary, string selectedQueue,
-        PrinterConfiguration extra, bool isExpensive, bool production)
+        PrinterConfiguration extra, bool isExpensive, bool production, UserSettings? settings = null)
     {
         var extraQueue = extra.UseSelectedPrinter ? selectedQueue : extra.QueueName;
+        if (settings is not null)
+        {
+            primary = settings.ApplyPrinterOffsets(primary, selectedQueue);
+            if (isExpensive && extraQueue is not null) extra = settings.ApplyPrinterOffsets(extra, extraQueue);
+        }
         var errors = production ? ProductionGuard.Validate(primary, selectedQueue, normal, request).ToList() : new List<string>();
         if (isExpensive)
         {

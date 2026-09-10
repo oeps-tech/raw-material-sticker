@@ -23,6 +23,7 @@ public sealed class MainForm : Form
     private readonly CancellationTokenSource _closing = new();
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 1000 };
     private readonly ComboBox _printer = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, AccessibleName = "Printer" };
+    private readonly Button _printerSettings = new() { Text = "⚙", Dock = DockStyle.Fill, FlatStyle = FlatStyle.Flat, AccessibleName = "Printer offsets", Margin = new Padding(6, 0, 0, 0), TabStop = true };
     private readonly RadioButton _oepsMode = SearchModeButton("&OEPS PN");
     private readonly RadioButton _mpnMode = SearchModeButton("&MPN");
     private readonly TextBox _search = new() { Dock = DockStyle.Fill, PlaceholderText = "Search part numbers…", AccessibleName = "Component search", BorderStyle = BorderStyle.None };
@@ -35,7 +36,7 @@ public sealed class MainForm : Form
     private readonly ComboBox _month = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 64, AccessibleName = "Reception month" };
     private readonly ComboBox _year = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 64, AccessibleName = "Reception year" };
     private readonly ComboBox _packaging = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 84, AccessibleName = "Lot packaging" };
-    private readonly NumericUpDown _quantity = new() { Width = 64, Minimum = 0, Maximum = int.MaxValue, DecimalPlaces = 0, AccessibleName = "Component quantity" };
+    private readonly NumericUpDown _quantity = new() { Width = 77, Minimum = 0, Maximum = int.MaxValue, DecimalPlaces = 0, AccessibleName = "Component quantity" };
     private readonly CheckBox _decimalQuantity = new() { Text = "Use decimal number", AutoSize = true, Margin = Padding.Empty, AccessibleName = "Use decimal quantity" };
     private readonly CheckBox _dryRun = new() { Text = "&Dry run", AutoSize = true };
     private readonly CheckBox _monthUnavailable = new() { Text = "Use '00'", AutoSize = true, CheckAlign = ContentAlignment.MiddleLeft, AccessibleName = "Use 00 for month", Margin = Padding.Empty };
@@ -81,7 +82,7 @@ public sealed class MainForm : Form
         AutoScaleDimensions = new SizeF(96f, 96f);
         AutoScaleMode = AutoScaleMode.Dpi;
         ClientSize = new Size(_settings.WindowWidth, _settings.WindowHeight);
-        MinimumSize = SizeFromClientSize(new Size(560, 530));
+        MinimumSize = SizeFromClientSize(new Size(560, UserSettings.MinimumWindowHeight));
         StartPosition = FormStartPosition.CenterScreen;
         if (_settings.WindowX is int x && _settings.WindowY is int y && Screen.AllScreens.Any(s => s.WorkingArea.IntersectsWith(new Rectangle(x, y, 100, 100))))
         { StartPosition = FormStartPosition.Manual; Location = new Point(x, y); }
@@ -127,6 +128,8 @@ public sealed class MainForm : Form
         _mpnMode.CheckedChanged += (_, _) => StyleSearchModes();
         _printer.SelectedIndexChanged += (_, _) => { _printerError = null; UpdateValidation(); };
         _printer.DropDown += (_, _) => LoadPrinters();
+        _printerSettings.Click += (_, _) => ConfigurePrinterOffsets();
+        _toolTip.SetToolTip(_printerSettings, "Configure offsets for the selected printer");
         _month.SelectedIndexChanged += (_, _) => { _session.Month = _month.Text; UpdateValidation(); };
         _year.TextChanged += (_, _) => { _session.Year = _year.Text; UpdateValidation(); };
         _packaging.SelectedIndexChanged += (_, _) => { _session.Packaging = _packaging.Text; UpdateValidation(); };
@@ -154,7 +157,7 @@ public sealed class MainForm : Form
         _extendedDescription.CheckedChanged += (_, _) => UpdateValidation();
         _print.Click += async (_, _) => await SubmitAsync();
         _refresh.Click += async (_, _) => await RefreshAsync();
-        _updateStatus.LinkClicked += (_, _) => { _jobStatus.Text = "Close this app when ready, then start it using the OEPS desktop shortcut to install the update."; };
+        _updateStatus.LinkClicked += (_, _) => { _jobStatus.Text = "Restart this app when ready to install the update. You can choose ‘Not now’ to skip the update."; };
         _timer.Tick += async (_, _) =>
         {
             UpdateFooter();
@@ -215,18 +218,44 @@ public sealed class MainForm : Form
         var layout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, RowCount = 0 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         void Row(Control control, int height) { layout.RowCount++; layout.RowStyles.Add(new RowStyle(SizeType.Absolute, height)); layout.Controls.Add(control, 0, layout.RowCount - 1); }
-        var printerRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty, Padding = new Padding(12, 0, 0, 0) };
+        var printerRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty, Padding = new Padding(12, 0, 0, 0) };
+        printerRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         printerRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130)); printerRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        printerRow.Controls.Add(Caption("&Printer"), 0, 0); _printer.Anchor = AnchorStyles.Left | AnchorStyles.Right; _printer.Dock = DockStyle.None; printerRow.Controls.Add(_printer, 1, 0);
+        printerRow.Controls.Add(Caption("&Printer"), 0, 0);
+        var printerControls = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
+        printerControls.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        printerControls.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        printerControls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 38));
+        _printer.Anchor = AnchorStyles.Left | AnchorStyles.Right; _printer.Dock = DockStyle.None;
+        _printerSettings.Font = new Font("Segoe UI Symbol", 10f);
+        _printerSettings.Dock = DockStyle.None;
+        _printerSettings.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+        _printerSettings.Height = _printer.Height;
+        _printer.SizeChanged += (_, _) => _printerSettings.Height = _printer.Height;
+        _printerSettings.FlatAppearance.BorderColor = Color.FromArgb(199, 207, 217);
+        printerControls.Controls.Add(_printer, 0, 0); printerControls.Controls.Add(_printerSettings, 1, 0);
+        printerRow.Controls.Add(printerControls, 1, 0);
         Row(printerRow, 38); Row(new Panel(), 8);
         var fields = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 8, BackColor = Color.White, Padding = new Padding(12), Margin = Padding.Empty };
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130)); fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        fields.Paint += (_, e) => ControlPaint.DrawBorder(e.Graphics, fields.ClientRectangle, Color.FromArgb(219, 226, 234), ButtonBorderStyle.Solid);
-        for (var i = 0; i < 7; i++) fields.RowStyles.Add(new RowStyle(SizeType.Absolute, i == 2 ? 68 : i == 3 ? 64 : 40));
+        fields.Paint += (_, e) =>
+        {
+            var borderColor = Color.FromArgb(219, 226, 234);
+            ControlPaint.DrawBorder(e.Graphics, fields.ClientRectangle, borderColor, ButtonBorderStyle.Solid);
+            var separatorY = fields.Padding.Top + fields.GetRowHeights().Take(4).Sum();
+            using var separatorPen = new Pen(borderColor);
+            e.Graphics.DrawLine(separatorPen, fields.Padding.Left, separatorY, fields.ClientSize.Width - fields.Padding.Right, separatorY);
+        };
+        for (var i = 0; i < 7; i++) fields.RowStyles.Add(new RowStyle(SizeType.Absolute, i == 2 ? 68 : i == 3 ? 64 : i == 4 ? 50 : 40));
         fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         void Field(string caption, Control control, int row)
         {
             var label = Caption(caption); label.TabIndex = row * 2;
+            if (row == 4)
+            {
+                label.Margin = new Padding(0, 10, 8, 0);
+                control.Margin = new Padding(0, 14, 0, 4);
+            }
             control.TabIndex = row * 2 + 1;
             fields.Controls.Add(label, 0, row); fields.Controls.Add(control, 1, row);
         }
@@ -262,7 +291,7 @@ public sealed class MainForm : Form
         _decimalQuantity.Font = _dateHint.Font;
         quantityFields.Controls.Add(quantityRow, 0, 0); quantityFields.Controls.Add(_decimalQuantity, 0, 1);
         Field("&Quantity", quantityFields, 3);
-        Row(fields, 380); Row(new Panel(), 6);
+        Row(fields, 390); Row(new Panel(), 6);
         var buttons = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
         buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45)); buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
         _refresh.Margin = new Padding(0, 0, 8, 0); _print.Margin = Padding.Empty;
@@ -304,6 +333,28 @@ public sealed class MainForm : Form
         }
         catch (Exception e) { _printerError = "Cannot list printer queues: " + e.Message; }
         if (_printerError is not null) _jobStatus.Text = _printerError;
+        UpdateValidation();
+    }
+
+    private void ConfigurePrinterOffsets()
+    {
+        if (_submitting || _printer.SelectedItem is not string queue) return;
+        using var dialog = new PrinterOffsetsDialog(queue, _settings.GetPrinterOffsets(queue));
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        var existed = _settings.PrinterOffsets.TryGetValue(queue, out var previous);
+        try
+        {
+            dialog.Offsets.Validate();
+            _settings.PrinterOffsets[queue] = dialog.Offsets;
+            _settings.Save(_paths.SettingsFile);
+            _jobStatus.Text = $"Offsets saved for {queue}: X {dialog.Offsets.XMm:0.##} mm, Y {dialog.Offsets.YMm:0.##} mm.";
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            if (existed) _settings.PrinterOffsets[queue] = previous!;
+            else _settings.PrinterOffsets.Remove(queue);
+            MessageBox.Show(this, "Could not save printer offsets: " + e.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
         UpdateValidation();
     }
 
@@ -375,6 +426,7 @@ public sealed class MainForm : Form
     }
     private void UpdateValidation()
     {
+        _printerSettings.Enabled = !_submitting && _printer.SelectedItem is string;
         var isExpensive = _session.Selected?.IsExpensive == true;
         _pn.Text = _session.Selected is { } selected ? selected.OepsPn + (isExpensive ? " - EXPENSIVE ITEM💰" : "") : "—";
         _mpn.Text = _session.Selected?.Mpn ?? "—";
@@ -409,7 +461,7 @@ public sealed class MainForm : Form
                     {
                         try
                         {
-                            _ = _jobRenderer.RenderProfiles(request, _config.Printer, queue, _config.ExpensivePrinter, PrinterTest || isExpensive, !PrinterTest);
+                            _ = _jobRenderer.RenderProfiles(request, _config.Printer, queue, _config.ExpensivePrinter, PrinterTest || isExpensive, !PrinterTest, _settings);
                         }
                         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { error = ex.Message; }
                     }
@@ -478,7 +530,7 @@ public sealed class MainForm : Form
             if (dryRun)
             {
                 var rendered = _config.ExpensivePrinter is null ? _jobRenderer!.Render(request, isExpensive)
-                    : new RenderedPrintJob(_jobRenderer!.RenderProfiles(request, _config.Printer, queue ?? _config.Printer.QueueName ?? "", _config.ExpensivePrinter, isExpensive, false)
+                    : new RenderedPrintJob(_jobRenderer!.RenderProfiles(request, _config.Printer, queue ?? _config.Printer.QueueName ?? "", _config.ExpensivePrinter, isExpensive, false, _settings)
                         .SelectMany(label => label.Bytes).ToArray(), isExpensive ? 2 : 1);
                 Directory.CreateDirectory(_paths.DryRunDirectory);
                 var file = Path.Combine(_paths.DryRunDirectory, $"label-{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.zpl");
@@ -488,7 +540,7 @@ public sealed class MainForm : Form
             else
             {
                 var labels = _config.ExpensivePrinter is not null
-                    ? _jobRenderer!.RenderProfiles(request, _config.Printer, queue!, _config.ExpensivePrinter, isExpensive, !PrinterTest)
+                    ? _jobRenderer!.RenderProfiles(request, _config.Printer, queue!, _config.ExpensivePrinter, isExpensive, !PrinterTest, _settings)
                     : new[] { new RoutedLabel("L3 job", queue!, _jobRenderer!.RenderProduction(request, _config.Printer, queue!, isExpensive).Bytes) };
                 foreach (var label in labels)
                 {
@@ -519,7 +571,7 @@ public sealed class MainForm : Form
             if (!IsDisposed && release is not null && SemanticVersion.TryParse(_version, out var installed) && release.Version.CompareTo(installed) > 0)
             {
                 _updateStatus.Text = "Update available";
-                _toolTip.SetToolTip(_updateStatus, "Close the app, then use its desktop shortcut to install the update.");
+                _toolTip.SetToolTip(_updateStatus, "Restart this app when ready to install the update. You can choose ‘Not now’ to skip the update.");
             }
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or InvalidDataException or System.Text.Json.JsonException or ArgumentException) { /* Optional release lookup must not disrupt work. */ }
@@ -550,6 +602,27 @@ public sealed class MainForm : Form
         try
         {
             if (!_config.SampleMode) throw new InvalidOperationException("UI smoke requires --sample.");
+            _printer.Items.Add("Zebra ZD421 (sample)");
+            _printer.SelectedItem = "Zebra ZD421 (sample)";
+            if (!_printerSettings.Enabled || _printerSettings.Parent != _printer.Parent || _printer.Right >= _printerSettings.Left)
+                throw new Exception("Printer settings button is not alongside the queue selector.");
+            if (!_printer.Parent!.ClientRectangle.Contains(_printer.Bounds) || !_printerSettings.Parent!.ClientRectangle.Contains(_printerSettings.Bounds))
+                throw new Exception("Printer selector or settings button is clipped.");
+            using (var offsetsDialog = new PrinterOffsetsDialog(_printer.Text, new PrinterOffsets(1.25m, -0.5m)) { Opacity = 0 })
+            {
+                offsetsDialog.Shown += (_, _) =>
+                {
+                    using var snapshot = new Bitmap(offsetsDialog.Width, offsetsDialog.Height);
+                    offsetsDialog.DrawToBitmap(snapshot, new Rectangle(Point.Empty, snapshot.Size));
+                    Directory.CreateDirectory(_paths.UserDataRoot);
+                    snapshot.Save(Path.Combine(_paths.UserDataRoot, "ui-smoke-printer-offsets.png"));
+                    offsetsDialog.DialogResult = DialogResult.Cancel;
+                    offsetsDialog.Close();
+                };
+                offsetsDialog.ShowDialog(this);
+                if (offsetsDialog.Offsets != new PrinterOffsets(1.25m, -0.5m)) throw new Exception("Offset dialog did not load the saved values.");
+            }
+            report.Add("PASS printer settings button, offset dialog and loaded millimetre values");
             _search.Text = "OEPS101234";
             if (_suggestions.Items.Count < 2) throw new Exception("Multiple MPN suggestions missing.");
             if (!_suggestions.Visible) throw new Exception("Typing did not open the autocomplete dropdown.");
@@ -635,8 +708,12 @@ public sealed class MainForm : Form
             _jobStatus.Text = "";
             using var screenshot = CaptureWindow();
             Directory.CreateDirectory(_paths.UserDataRoot); screenshot.Save(Path.Combine(_paths.UserDataRoot, "ui-smoke.png"));
-            ClientSize = new Size((int)(560 * DeviceDpi / 96f), (int)(530 * DeviceDpi / 96f));
+            ClientSize = new Size((int)(560 * DeviceDpi / 96f), (int)(UserSettings.MinimumWindowHeight * DeviceDpi / 96f));
             PerformLayout();
+            var footerTop = _syncStatus.Parent!.Top;
+            foreach (var status in new[] { _validation, _jobStatus })
+                if (PointToClient(status.PointToScreen(new Point(0, status.Height))).Y > footerTop)
+                    throw new Exception("Status or report is clipped below the footer at minimum window height.");
             var hintSize = TextRenderer.MeasureText(_dateHint.Text, _dateHint.Font,
                 new Size(_dateHint.ClientSize.Width, int.MaxValue), TextFormatFlags.WordBreak);
             if (hintSize.Height > _dateHint.ClientSize.Height) throw new Exception("Lot preview is clipped at minimum window width.");

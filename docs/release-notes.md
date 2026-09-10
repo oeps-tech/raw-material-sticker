@@ -1,13 +1,11 @@
-Install **Oeps.RawMaterialSticker-0.1.4-setup-win-x64.msi** for a new installation or to upgrade the installer/launcher. The MSI bundles the Windows .NET runtime and does not use PowerShell during installation or app startup.
-
-Existing installations can download the app update through the OEPS desktop shortcut. The `win-x64.zip` and its `.sha256` file are used by the updater. Updating the app alone does not replace an older installer/launcher; use the MSI to migrate from the previous PowerShell-based installation.
+Install **Oeps.RawMaterialSticker-0.1.5-setup-win-x64.msi** for a new installation. Existing installations can update through the OEPS desktop shortcut.
 
 Changes:
-- Production printing follows the Windows printer selected in the GUI, with separate packaged settings for L3 and L3 expensive.
-- Updated L3 layout with PN Data Matrix, lot QR, and quantity Data Matrix; updated L3 expensive positions.
-- Lots use `MMYY_PACK_RAND`, packaging options, and independent month/year “Use '00'” checkboxes. Years run from 2020 through the current year.
-- Quantity defaults to whole numbers, with optional decimal entry. Zero omits the quantity text and Data Matrix; nonzero Data Matrix payloads are padded to at least seven characters, including the decimal point.
-- PN text supports `OEPS 01 1234`, `OEPS A01 1234`, and `OEPS A01 123` on both labels while preserving unspaced barcode values.
-- Improved window scaling and an update prompt showing installed and available versions.
+- Added a cogwheel beside the printer selector to configure X/Y offsets in millimetres. Offsets save per Windows printer queue in local user settings and survive app updates. Each label uses its destination printer's correction.
+- Added Save, Cancel and Reset to zero controls for printer offsets.
+- Updated L3 with the two divider lines from the revised label export.
+- Increased minimum window height to 610 pixels so the status and report remain visible; smaller saved windows expand automatically.
+- Widened Quantity, added a subtle separator above the component details, and matched the cogwheel height to the printer field.
+- Simplified the update reminder.
 
-The MSI installation was tested on two computers, including one running Bitdefender. The revised label layouts still need a physical print and scan check on the target printer.
+The MSI includes the Windows .NET runtime. The app ZIP and its SHA-256 file are used by the updater; the MSI checksum is also included.

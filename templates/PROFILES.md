@@ -28,5 +28,20 @@ September 9 layouts use the newly supplied label exports; these revisions still
 need a physical print and scan check. Each profile records its current template
 hash in `validatedTemplateSha256` and its validation history in `validationNotes`.
 Dry runs include both labels' actual setup commands, without submitting to a printer.
-Dimensions/DPI and nonzero offsets outside the supported layout are rejected rather
-than silently changing barcode geometry.
+Dimensions/DPI outside the supported layout are rejected. Local printer corrections
+are configured through the cogwheel beside the queue selector, in millimetres
+(-10 to +10 on each axis). Save writes immediately to `printerOffsets` in
+`%LOCALAPPDATA%\OEPS\RawMaterialSticker\user-settings.json`, keyed by Windows queue
+name. Cancel leaves saved values unchanged; Reset to zero takes effect on Save.
+Settings survive application updates. Renaming a queue requires configuring its
+new name. Both labels use the correction belonging to their actual destination.
+
+Local offsets add to the release profile's offsets, rounded to whole printer dots.
+X positive moves right; Y positive moves down in the printer's label coordinates,
+independent of rotated text. ZPL uses the inverse X value in `^LS` and Y in `^LT`;
+the template's `^LS0` is removed so it cannot cancel the correction. Every format
+sets both offsets explicitly, including zero, to avoid retaining a previous queue's
+correction. Combined offsets must fit X ±9999 dots and Y ±120 dots.
+See Zebra's [ZPL programming guide](https://www.zebra.com/content/dam/support-dam/en/documentation/unrestricted/guide/software/zpl-zbi2-pg-en.pdf)
+for `^LS` (shift left) and `^LT` (label top). Check physical alignment after changing
+offsets; moving content beyond the media edges can clip it.

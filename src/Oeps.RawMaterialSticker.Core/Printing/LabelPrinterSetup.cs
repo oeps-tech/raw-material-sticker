@@ -10,11 +10,14 @@ public static class LabelPrinterSetup
             throw new ArgumentException("Invalid label speed or darkness.");
         if (printer.Dpi != 300 || printer.LabelWidthMm != 30 || printer.LabelHeightMm != 50)
             throw new ArgumentException("The supplied label templates require 300 DPI and 30 × 50 mm media.");
-        if (printer.OffsetXDots != 0 || printer.OffsetYDots != 0)
-            throw new ArgumentException("Nonzero offsets require layout validation before use.");
+        if (printer.OffsetXDots is < -9999 or > 9999 || printer.OffsetYDots is < -120 or > 120)
+            throw new ArgumentException("Combined printer offsets exceed the supported range (X: ±9999 dots; Y: ±120 dots).");
         var media = printer.MediaTracking switch { "continuous" => "N", "web" => "W", "mark" => "M", _ => throw new ArgumentException("Invalid media sensing.") };
         var method = printer.PrintMethod switch { "direct-thermal" => "D", "thermal-transfer" => "T", _ => throw new ArgumentException("Invalid print method.") };
         if (!zpl.StartsWith("^XA\n", StringComparison.Ordinal)) throw new ArgumentException("Invalid label format.");
-        return FormattableString.Invariant($"^XA\n^MN{media}\n^MT{method}\n^PR{printer.PrintSpeedIps}\n~SD{printer.Darkness}\n^MD0\n^MUD\n^PON\n^PMN\n^LH0,0\n^LT0\n^LRN\n") + zpl[4..];
+        // ZPL ^LS is a shift LEFT; UI X is positive to the right. Remove the
+        // template reset so it cannot cancel the queue correction later in the job.
+        var body = zpl[4..].Replace("^LS0\n", "", StringComparison.Ordinal);
+        return FormattableString.Invariant($"^XA\n^MN{media}\n^MT{method}\n^PR{printer.PrintSpeedIps}\n~SD{printer.Darkness}\n^MD0\n^MUD\n^PON\n^PMN\n^LH0,0\n^LS{-printer.OffsetXDots}\n^LT{printer.OffsetYDots}\n^LRN\n") + body;
     }
 }

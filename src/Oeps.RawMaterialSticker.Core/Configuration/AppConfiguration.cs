@@ -90,6 +90,13 @@ public sealed class HeaderAliases
 
 public sealed class PrinterConfiguration
 {
+    public PrinterConfiguration WithAdditionalOffsets(int x, int y)
+    {
+        var copy = (PrinterConfiguration)MemberwiseClone();
+        copy.OffsetXDots = checked(OffsetXDots + x);
+        copy.OffsetYDots = checked(OffsetYDots + y);
+        return copy;
+    }
     public decimal LabelWidthMm { get; set; } = 30;
     public decimal LabelHeightMm { get; set; } = 50;
     public int OffsetXDots { get; set; }

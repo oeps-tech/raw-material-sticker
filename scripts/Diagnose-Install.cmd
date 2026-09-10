@@ -1,9 +1,9 @@
 @echo off
 setlocal
-set "OEPS_MSI=%~dp0Oeps.RawMaterialSticker-0.1.4-setup-win-x64.msi"
+set "OEPS_MSI=%~dp0Oeps.RawMaterialSticker-0.1.5-setup-win-x64.msi"
 set "OEPS_LOG=%TEMP%\OEPS-install.log"
 if not exist "%OEPS_MSI%" (
-  echo Put this file next to Oeps.RawMaterialSticker-0.1.4-setup-win-x64.msi and run it again.
+  echo Put this file next to Oeps.RawMaterialSticker-0.1.5-setup-win-x64.msi and run it again.
   pause
   exit /b 1
 )
