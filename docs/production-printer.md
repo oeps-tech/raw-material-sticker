@@ -9,4 +9,6 @@ User-provided hardware details:
 
 Both current ZPL templates use a 354-dot print width and a 591-dot label length, with rotated fields. At 300 DPI these are approximately 30 × 50 mm in printer feed coordinates, matching the confirmed label dimensions. Retain the current template orientation.
 
-Dry run remains enabled and production validation remains incomplete. Connection type, ribbon/direct-thermal method, media tracking, speed and darkness still need confirmation, followed by physical printing and barcode scanning of both label types.
+Confirmed connection: network. Print method: thermal transfer using ribbon. Media tracking: gaps (`web`).
+
+Dry run remains enabled and production validation remains incomplete. Speed and darkness still need confirmation, followed by physical printing and barcode scanning of both label types.

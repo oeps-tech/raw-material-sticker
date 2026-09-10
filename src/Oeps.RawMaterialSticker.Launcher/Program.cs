@@ -39,9 +39,11 @@ internal sealed class LauncherForm : Form
 
     public LauncherForm(string[] args)
     {
+        SuspendLayout();
         _args = args;
         Text = "OEPS Raw Material Sticker — starting";
         ClientSize = new Size(480, 185);
+        AutoScaleDimensions = new SizeF(96f, 96f);
         AutoScaleMode = AutoScaleMode.Dpi;
         MinimumSize = new Size(460, 220);
         StartPosition = FormStartPosition.CenterScreen;
@@ -56,6 +58,7 @@ internal sealed class LauncherForm : Form
         _retry.Click += async (_, _) => await StartAsync();
         Shown += async (_, _) => await StartAsync();
         FormClosing += (_, _) => _closing.Cancel();
+        ResumeLayout(true);
     }
 
     private async Task StartAsync()
@@ -97,7 +100,8 @@ internal sealed class LauncherForm : Form
                 var releases = new GitHubReleaseClient(http, configuration.GitHubOwner, configuration.GitHubRepository, configuration.PackagePrefix);
                 var release = _recoverWithoutUpdate ? null : await releases.GetLatestReleaseAsync(_closing.Token);
                 var installedVersion = candidate?.Version ?? state.Current?.Version ?? state.Previous?.Version;
-                if (release is not null && (installedVersion is null || release.Version.CompareTo(SemanticVersion.Parse(installedVersion)) > 0))
+                if (release is not null && (installedVersion is null || release.Version.CompareTo(SemanticVersion.Parse(installedVersion)) > 0)
+                    && (installedVersion is null || ConfirmUpdate(installedVersion, release.VersionText)))
                 {
                     _status.Text = $"Downloading and validating version {release.VersionText}…";
                     candidate = await store.DownloadAndStageAsync(http, release, _closing.Token);
@@ -159,11 +163,49 @@ internal sealed class LauncherForm : Form
         finally { _busy = false; }
     }
 
+    private bool ConfirmUpdate(string currentVersion, string newVersion)
+    {
+        using var dialog = new Form
+        {
+            Text = "OEPS Raw Material Sticker — update available",
+            ClientSize = new Size(440, 190), Font = Font,
+            AutoScaleDimensions = new SizeF(96f, 96f), AutoScaleMode = AutoScaleMode.Dpi,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false, MinimizeBox = false,
+            StartPosition = FormStartPosition.CenterParent, ShowInTaskbar = false
+        };
+        var message = new Label
+        {
+            Dock = DockStyle.Fill, Padding = new Padding(20),
+            Text = $"A new version is available. Do you want to update?\n\nCurrent version: {currentVersion}\nNew version: {newVersion}"
+        };
+        var buttons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(8),
+            FlowDirection = FlowDirection.RightToLeft
+        };
+        var later = new Button { Text = "Not now", AutoSize = true, DialogResult = DialogResult.Cancel };
+        var update = new Button { Text = "Update now", AutoSize = true, DialogResult = DialogResult.OK };
+        buttons.Controls.Add(later);
+        buttons.Controls.Add(update);
+        dialog.Controls.Add(message);
+        dialog.Controls.Add(buttons);
+        dialog.AcceptButton = update;
+        dialog.CancelButton = later;
+        return dialog.ShowDialog(this) == DialogResult.OK;
+    }
+
     private static async Task LaunchAndWaitAsync(string executable, CancellationToken cancellationToken)
     {
         var eventName = @"Local\OEPS.RawMaterialSticker.Ready." + Guid.NewGuid().ToString("N");
         using var ready = new EventWaitHandle(false, EventResetMode.ManualReset, eventName);
         var start = new ProcessStartInfo(executable) { WorkingDirectory = Path.GetDirectoryName(executable)!, UseShellExecute = false };
+        var bundledRuntime = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "runtime"));
+        if (File.Exists(Path.Combine(bundledRuntime, "dotnet.exe")))
+        {
+            start.Environment["DOTNET_ROOT_X64"] = bundledRuntime;
+            start.Environment["DOTNET_ROOT"] = bundledRuntime;
+        }
         start.ArgumentList.Add("--startup-ready");
         start.ArgumentList.Add(eventName);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Windows could not start the app.");

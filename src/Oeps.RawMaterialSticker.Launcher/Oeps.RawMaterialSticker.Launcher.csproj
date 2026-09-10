@@ -9,5 +9,6 @@
   <ItemGroup>
     <ProjectReference Include="../Oeps.RawMaterialSticker.Core/Oeps.RawMaterialSticker.Core.csproj" />
     <Content Include="../../appsettings.json" Link="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../templates/*.json" Link="templates/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

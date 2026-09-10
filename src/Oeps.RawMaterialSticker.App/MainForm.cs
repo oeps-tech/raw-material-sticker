@@ -12,6 +12,7 @@ namespace Oeps.RawMaterialSticker.App;
 
 public sealed class MainForm : Form
 {
+    private bool PrinterTest => _args.Contains("--printer-test") && !_config.SampleMode;
     private readonly AppConfiguration _config;
     private readonly AppPaths _paths;
     private readonly UserSettings _settings;
@@ -32,10 +33,13 @@ public sealed class MainForm : Form
     private readonly CheckBox _extendedDescription = new() { Text = "&Extended description", AutoSize = true, Margin = new Padding(0, 0, 0, 0) };
     private Panel _descriptionFrame = null!;
     private readonly ComboBox _month = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 64, AccessibleName = "Reception month" };
-    private readonly ComboBox _year = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 84, AccessibleName = "Reception year" };
-    private readonly NumericUpDown _quantity = new() { Width = 116, Minimum = 0, Maximum = int.MaxValue, AccessibleName = "Component quantity" };
+    private readonly ComboBox _year = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 64, AccessibleName = "Reception year" };
+    private readonly ComboBox _packaging = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 84, AccessibleName = "Lot packaging" };
+    private readonly NumericUpDown _quantity = new() { Width = 64, Minimum = 0, Maximum = int.MaxValue, DecimalPlaces = 0, AccessibleName = "Component quantity" };
+    private readonly CheckBox _decimalQuantity = new() { Text = "Use decimal number", AutoSize = true, Margin = Padding.Empty, AccessibleName = "Use decimal quantity" };
     private readonly CheckBox _dryRun = new() { Text = "&Dry run", AutoSize = true };
-    private readonly CheckBox _dateUnavailable = new() { Text = "Not &available", AutoSize = true, CheckAlign = ContentAlignment.MiddleRight, AccessibleName = "Reception date not available", Margin = new Padding(8, 4, 0, 0) };
+    private readonly CheckBox _monthUnavailable = new() { Text = "Use '00'", AutoSize = true, CheckAlign = ContentAlignment.MiddleLeft, AccessibleName = "Use 00 for month", Margin = Padding.Empty };
+    private readonly CheckBox _yearUnavailable = new() { Text = "Use '00'", AutoSize = true, CheckAlign = ContentAlignment.MiddleLeft, AccessibleName = "Use 00 for year", Margin = Padding.Empty };
     private readonly Button _print = new() { Text = "Print sticker", Dock = DockStyle.Fill, BackColor = Color.FromArgb(0, 103, 192), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
     private readonly Button _refresh = new() { Text = "&Update database", Dock = DockStyle.Fill, FlatStyle = FlatStyle.Flat, BackColor = Color.White, ForeColor = Color.FromArgb(0, 93, 174) };
     private readonly Label _dateHint = new() { AutoSize = true, ForeColor = Color.FromArgb(87, 99, 114), Margin = new Padding(9, 6, 0, 0) };
@@ -57,10 +61,12 @@ public sealed class MainForm : Form
 
     public MainForm(AppConfiguration config, AppPaths paths, HttpClient http, string[] args)
     {
+        SuspendLayout();
         _config = config; _paths = paths; _http = http; _args = args;
         _settings = UserSettings.Load(paths.SettingsFile);
         _repository = new ComponentRepository(http, config, paths);
         Text = "OEPS Raw Material Sticker";
+        if (PrinterTest) Text += " — PRINTER TEST (L3 + L3 expensive)";
         using (var iconStream = typeof(MainForm).Assembly.GetManifestResourceStream("Oeps.AppIcon"))
         {
             if (iconStream is not null)
@@ -72,6 +78,7 @@ public sealed class MainForm : Form
         if (args.Contains("--ui-smoke")) { ShowInTaskbar = false; Opacity = 0; }
         Font = new Font("Segoe UI", 10f);
         BackColor = Color.FromArgb(248, 250, 252);
+        AutoScaleDimensions = new SizeF(96f, 96f);
         AutoScaleMode = AutoScaleMode.Dpi;
         ClientSize = new Size(_settings.WindowWidth, _settings.WindowHeight);
         MinimumSize = SizeFromClientSize(new Size(560, 530));
@@ -81,9 +88,11 @@ public sealed class MainForm : Form
         if (_settings.WindowMaximized) WindowState = FormWindowState.Maximized;
         BuildLayout();
         _month.Items.AddRange(Enumerable.Range(1, 12).Select(n => (object)n.ToString("00")).ToArray());
-        _year.Items.AddRange(Enumerable.Range(2000, 100).Select(n => (object)n.ToString("0000")).ToArray());
+        _year.Items.AddRange(Enumerable.Range(2020, DateTime.Now.Year - 2020 + 1).Select(n => (object)n.ToString("0000")).ToArray());
         _month.SelectedItem = _session.Month; _year.Text = _session.Year;
         _quantity.Text = "";
+        _packaging.Items.AddRange(LabelValues.PackagingCodes.Keys.Cast<object>().ToArray());
+        _packaging.SelectedItem = _session.Packaging;
         _dryRun.Checked = config.DryRun || config.SampleMode;
         _dryRun.Enabled = !config.SampleMode;
         _oepsMode.Checked = _settings.SearchMode == SearchMode.OepsPn; _mpnMode.Checked = !_oepsMode.Checked;
@@ -99,7 +108,8 @@ public sealed class MainForm : Form
         ExpensiveLabelRenderer? expensiveRenderer = null;
         try
         {
-            var path = Path.IsPathRooted(config.Printer.ExpensiveTemplatePath) ? config.Printer.ExpensiveTemplatePath : Path.Combine(AppContext.BaseDirectory, config.Printer.ExpensiveTemplatePath);
+            var extraTemplate = config.ExpensivePrinter?.TemplatePath ?? config.Printer.ExpensiveTemplatePath;
+            var path = Path.IsPathRooted(extraTemplate) ? extraTemplate : Path.Combine(AppContext.BaseDirectory, extraTemplate);
             expensiveRenderer = new ExpensiveLabelRenderer(File.ReadAllText(path));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or InvalidDataException) { _expensiveTemplateError = "L3 expensive template unavailable: " + e.Message; }
@@ -119,14 +129,27 @@ public sealed class MainForm : Form
         _printer.DropDown += (_, _) => LoadPrinters();
         _month.SelectedIndexChanged += (_, _) => { _session.Month = _month.Text; UpdateValidation(); };
         _year.TextChanged += (_, _) => { _session.Year = _year.Text; UpdateValidation(); };
-        _dateUnavailable.CheckedChanged += (_, _) =>
+        _packaging.SelectedIndexChanged += (_, _) => { _session.Packaging = _packaging.Text; UpdateValidation(); };
+        _monthUnavailable.CheckedChanged += (_, _) =>
         {
-            _session.DateUnavailable = _dateUnavailable.Checked;
-            _month.Enabled = _year.Enabled = !_dateUnavailable.Checked;
+            _session.MonthUnavailable = _monthUnavailable.Checked;
+            _month.Enabled = !_monthUnavailable.Checked;
+            UpdateValidation();
+        };
+        _yearUnavailable.CheckedChanged += (_, _) =>
+        {
+            _session.YearUnavailable = _yearUnavailable.Checked;
+            _year.Enabled = !_yearUnavailable.Checked;
             UpdateValidation();
         };
         _quantity.TextChanged += (_, _) => { _session.Quantity = _quantity.Text; UpdateValidation(); };
         _quantity.ValueChanged += (_, _) => { _session.Quantity = _quantity.Text; UpdateValidation(); };
+        _decimalQuantity.CheckedChanged += (_, _) =>
+        {
+            if (!_decimalQuantity.Checked) _quantity.Value = decimal.Truncate(_quantity.Value);
+            _quantity.DecimalPlaces = _decimalQuantity.Checked ? 3 : 0;
+            UpdateValidation();
+        };
         _dryRun.CheckedChanged += (_, _) => UpdateValidation();
         _extendedDescription.CheckedChanged += (_, _) => UpdateValidation();
         _print.Click += async (_, _) => await SubmitAsync();
@@ -150,6 +173,7 @@ public sealed class MainForm : Form
         Resize += (_, _) => HideSuggestions();
         UpdateValidation(); UpdateFooter();
         if (_settings.LoadError is not null) _jobStatus.Text = _settings.LoadError;
+        ResumeLayout(true);
     }
 
     private static TextBox ReadOnlyBox(string name) => new() { ReadOnly = true, Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, BackColor = Color.FromArgb(239, 243, 247), AccessibleName = name, TabStop = false };
@@ -198,7 +222,7 @@ public sealed class MainForm : Form
         var fields = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 8, BackColor = Color.White, Padding = new Padding(12), Margin = Padding.Empty };
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130)); fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         fields.Paint += (_, e) => ControlPaint.DrawBorder(e.Graphics, fields.ClientRectangle, Color.FromArgb(219, 226, 234), ButtonBorderStyle.Solid);
-        for (var i = 0; i < 7; i++) fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        for (var i = 0; i < 7; i++) fields.RowStyles.Add(new RowStyle(SizeType.Absolute, i == 2 ? 68 : i == 3 ? 64 : 40));
         fields.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         void Field(string caption, Control control, int row)
         {
@@ -216,15 +240,29 @@ public sealed class MainForm : Form
         Field("Description", _descriptionFrame, 6);
         _extendedDescription.TabIndex = 15;
         fields.Controls.Add(_extendedDescription, 1, 7);
-        var date = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0, 6, 0, 0) };
-        _month.Margin = new Padding(0, 0, 8, 0); _year.Margin = Padding.Empty;
+        var date = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 4, Margin = new Padding(0, 6, 0, 0) };
+        date.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); date.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        date.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 72));
+        date.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 72));
+        date.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84));
+        date.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        _month.Margin = new Padding(0, 0, 8, 0); _year.Margin = new Padding(0, 0, 8, 0); _packaging.Margin = Padding.Empty;
         _dateHint.Font = new Font(Font.FontFamily, 9f); _dateHint.Margin = new Padding(6, 5, 0, 0);
-        _dateUnavailable.Font = _dateHint.Font;
-        date.Controls.AddRange([_month, _year, _dateHint, _dateUnavailable]); Field("Reception &date", date, 2);
+        _dateHint.AutoSize = false; _dateHint.Dock = DockStyle.Fill;
+        _monthUnavailable.Font = _yearUnavailable.Font = _dateHint.Font;
+        date.Controls.Add(_month, 0, 0); date.Controls.Add(_year, 1, 0);
+        date.Controls.Add(_packaging, 2, 0); date.Controls.Add(_dateHint, 3, 0);
+        date.Controls.Add(_monthUnavailable, 0, 1); date.Controls.Add(_yearUnavailable, 1, 1); Field("&Lot (batch)", date, 2);
         var quantityRow = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0, 6, 0, 0) };
         _quantity.Margin = new Padding(0, 0, 12, 0);
-        quantityRow.Controls.AddRange([_quantity, new Label { Text = "Components in package", AutoSize = true, ForeColor = Color.FromArgb(87, 99, 114), Margin = new Padding(0, 5, 0, 0) }]); Field("&Quantity", quantityRow, 3);
-        Row(fields, 328); Row(new Panel(), 6);
+        quantityRow.Controls.AddRange([_quantity, new Label { Text = "Components in package (0 = unknown)", AutoSize = true, ForeColor = Color.FromArgb(87, 99, 114), Margin = new Padding(0, 5, 0, 0) }]);
+        var quantityFields = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, Margin = Padding.Empty };
+        quantityFields.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+        quantityFields.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        _decimalQuantity.Font = _dateHint.Font;
+        quantityFields.Controls.Add(quantityRow, 0, 0); quantityFields.Controls.Add(_decimalQuantity, 0, 1);
+        Field("&Quantity", quantityFields, 3);
+        Row(fields, 380); Row(new Panel(), 6);
         var buttons = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
         buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45)); buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
         _refresh.Margin = new Padding(0, 0, 8, 0); _print.Margin = Padding.Empty;
@@ -233,9 +271,8 @@ public sealed class MainForm : Form
         buttons.Controls.Add(_refresh, 0, 0); buttons.Controls.Add(_print, 1, 0); Row(buttons, 38);
         var validationRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
         validationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); validationRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        _dryRun.Anchor = AnchorStyles.Right; _dryRun.Margin = new Padding(10, 0, 0, 0);
         _validation.Font = new Font(Font.FontFamily, 8.5f); _jobStatus.Font = _validation.Font;
-        validationRow.Controls.Add(_validation, 0, 0); validationRow.Controls.Add(_dryRun, 1, 0); Row(validationRow, 30); Row(_jobStatus, 29);
+        validationRow.Controls.Add(_validation, 0, 0); Row(validationRow, 30); Row(_jobStatus, 29);
         var footer = new TableLayoutPanel { Dock = DockStyle.Bottom, Height = 35, ColumnCount = 4, Padding = new Padding(16, 0, 12, 0), BackColor = Color.FromArgb(240, 244, 248), Font = new Font(Font.FontFamily, 8.5f) };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 19)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 65)); footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         footer.Controls.Add(_syncIndicator, 0, 0); footer.Controls.Add(_syncStatus, 1, 0); footer.Controls.Add(Caption($"│  v{_version}"), 2, 0);
@@ -330,9 +367,11 @@ public sealed class MainForm : Form
         if (_session.Selected is not { } c) { error = _repository.HasData ? "Select a component pairing from the suggestions." : "An initial successful database download is required. Use --sample for offline demonstration."; return null; }
         if (!_repository.HasExpensiveData) { error = "Update database to load expensive-item status before printing."; return null; }
         int year = 0, month = 0;
-        if (!_dateUnavailable.Checked && (_year.Text.Length != 4 || !int.TryParse(_year.Text, NumberStyles.None, CultureInfo.InvariantCulture, out year) || !int.TryParse(_month.Text, out month))) { error = "Enter a four-digit year and select a reception month."; return null; }
-        if (!int.TryParse(_quantity.Text, NumberStyles.None, CultureInfo.InvariantCulture, out var quantity) || quantity <= 0) { error = "Quantity must be a positive whole number of components."; return null; }
-        return new LabelRequest(c.OepsPn, c.Mpn, month, year, quantity, _dateUnavailable.Checked);
+        if (!_yearUnavailable.Checked && (_year.Text.Length != 4 || !int.TryParse(_year.Text, NumberStyles.None, CultureInfo.InvariantCulture, out year))) { error = "Select a reception year."; return null; }
+        if (!_monthUnavailable.Checked && !int.TryParse(_month.Text, out month)) { error = "Select a reception month."; return null; }
+        if (!decimal.TryParse(_quantity.Text.Replace(',', '.'), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var quantity) || quantity < 0) { error = "Enter a quantity; use 0 if unavailable."; return null; }
+        if (!_decimalQuantity.Checked && quantity != decimal.Truncate(quantity)) { error = "Select Use decimal number to enter a fractional quantity."; return null; }
+        return new LabelRequest(c.OepsPn, c.Mpn, month, year, quantity, _monthUnavailable.Checked, _yearUnavailable.Checked, _session.Packaging, _session.RandomCode);
     }
     private void UpdateValidation()
     {
@@ -349,8 +388,13 @@ public sealed class MainForm : Form
         _descriptionFrame.Padding = new Padding(9, 6, 9, 5);
         if (_description.Text != displayedDescription) _description.Text = displayedDescription;
         var request = GetRequest(out var error);
-        _dateHint.Text = _dateUnavailable.Checked ? "Prints as 0000" : int.TryParse(_month.Text, out var month) && int.TryParse(_year.Text, out var year) && month is >= 1 and <= 12 && year is >= 2000 and <= 2099
-            ? $"Prints as {month:00}{year % 100:00}" : "";
+        try
+        {
+            var month = int.TryParse(_month.Text, out var m) ? m : 0;
+            var year = int.TryParse(_year.Text, out var y) ? y : 0;
+            _dateHint.Text = "Print as " + LabelValues.FormatLot(new LabelRequest("", "", month, year, 0, _monthUnavailable.Checked, _yearUnavailable.Checked, _session.Packaging, _session.RandomCode));
+        }
+        catch (ArgumentException) { _dateHint.Text = ""; }
         if (_templateError is not null) error = _templateError;
         if (isExpensive && _expensiveTemplateError is not null) error = _expensiveTemplateError;
         if (request is not null && _jobRenderer is not null)
@@ -361,6 +405,14 @@ public sealed class MainForm : Form
                 if (!_dryRun.Checked)
                 {
                     if (_printer.SelectedItem is not string queue) error = _printerError ?? "Select an installed printer queue.";
+                    else if (_config.ExpensivePrinter is not null)
+                    {
+                        try
+                        {
+                            _ = _jobRenderer.RenderProfiles(request, _config.Printer, queue, _config.ExpensivePrinter, PrinterTest || isExpensive, !PrinterTest);
+                        }
+                        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { error = ex.Message; }
+                    }
                     else error = _jobRenderer.ValidateProduction(request, _config.Printer, queue, isExpensive).FirstOrDefault();
                 }
             }
@@ -373,6 +425,11 @@ public sealed class MainForm : Form
         _toolTip.SetToolTip(_description, displayedDescription);
         _print.Text = _submitting ? "Submitting…" : (_dryRun.Checked ? "&Save dry run" : "&Print sticker") + (isExpensive ? " (2 labels)" : "");
         _print.Enabled = !_submitting && error is null && request is not null && _renderer is not null;
+        if (PrinterTest)
+        {
+            _print.Text = _submitting ? "Submitting…" : "Print two test labels";
+            if (error is null) _validation.Text = "Hardware test: L3 first, then L3 expensive.";
+        }
         _refresh.Enabled = !_repository.IsRefreshing && !_config.SampleMode;
     }
     private async Task RefreshAsync()
@@ -410,13 +467,19 @@ public sealed class MainForm : Form
         _session.Revalidate(_repository.Components);
         UpdateValidation(); if (!_print.Enabled) return;
         var request = GetRequest(out _)!; var dryRun = _dryRun.Checked; var queue = _printer.SelectedItem as string;
-        var isExpensive = _session.Selected!.IsExpensive;
+        var isExpensive = PrinterTest || _session.Selected!.IsExpensive;
+        if (PrinterTest && !dryRun && MessageBox.Show(this,
+            $"Print L3 followed by L3 expensive?\n\nComponent: {request.OepsPn}\nMPN: {request.Mpn}\nL3: {queue}, {_config.Printer.PrintSpeedIps} in/s, darkness {_config.Printer.Darkness}\nL3 expensive: {_config.ExpensivePrinter?.QueueName}, {_config.ExpensivePrinter?.PrintSpeedIps} in/s, darkness {_config.ExpensivePrinter?.Darkness}\nMedia: 30 × 50 mm, ribbon, gaps\n\nThis sends TWO physical labels. Production validation remains disabled.",
+            "Confirm printer test", MessageBoxButtons.OKCancel, MessageBoxIcon.Information) != DialogResult.OK) return;
         _submitting = true; UpdateValidation();
+        var acceptedLabels = new List<string>();
         try
         {
             if (dryRun)
             {
-                var rendered = _jobRenderer!.Render(request, isExpensive);
+                var rendered = _config.ExpensivePrinter is null ? _jobRenderer!.Render(request, isExpensive)
+                    : new RenderedPrintJob(_jobRenderer!.RenderProfiles(request, _config.Printer, queue ?? _config.Printer.QueueName ?? "", _config.ExpensivePrinter, isExpensive, false)
+                        .SelectMany(label => label.Bytes).ToArray(), isExpensive ? 2 : 1);
                 Directory.CreateDirectory(_paths.DryRunDirectory);
                 var file = Path.Combine(_paths.DryRunDirectory, $"label-{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.zpl");
                 await File.WriteAllBytesAsync(file, rendered.Bytes, _closing.Token);
@@ -424,13 +487,26 @@ public sealed class MainForm : Form
             }
             else
             {
-                var rendered = _jobRenderer!.RenderProduction(request, _config.Printer, queue!, isExpensive);
-                var submission = await new RawPrinterTransport().SendAsync(queue!, rendered.Bytes, _closing.Token);
-                _jobStatus.Text = $"Sent to printer • job {submission.JobId}. Spooler accepted {rendered.LabelCount} label(s); check the physical output.";
+                var labels = _config.ExpensivePrinter is not null
+                    ? _jobRenderer!.RenderProfiles(request, _config.Printer, queue!, _config.ExpensivePrinter, isExpensive, !PrinterTest)
+                    : new[] { new RoutedLabel("L3 job", queue!, _jobRenderer!.RenderProduction(request, _config.Printer, queue!, isExpensive).Bytes) };
+                foreach (var label in labels)
+                {
+                    var submission = await new RawPrinterTransport().SendAsync(label.Queue, label.Bytes, _closing.Token);
+                    acceptedLabels.Add($"{label.Name}: {label.Queue}, job {submission.JobId}");
+                }
+                _jobStatus.Text = "Spooler accepted: " + string.Join("; ", acceptedLabels) + ". Check physical output.";
             }
+            _jobStatus.Text += " Lot: " + LabelValues.FormatLot(request);
+            _session.NextLot();
         }
-        catch (Exception e) { _jobStatus.Text = (dryRun ? "Dry run failed: " : "Submission failed or uncertain. Check the printer before retrying: ") + e.Message; }
-        finally { _submitting = false; if (!IsDisposed) UpdateValidation(); }
+        catch (Exception e) { _jobStatus.Text = (dryRun ? "Dry run failed: " : "Submission failed or uncertain. Check the printer before retrying: ") + e.Message
+            + (acceptedLabels.Count == 0 ? "" : " Already accepted: " + string.Join("; ", acceptedLabels) + ". Retrying prints these again."); }
+        finally
+        {
+            _submitting = false;
+            if (!IsDisposed) { _toolTip.SetToolTip(_jobStatus, _jobStatus.Text); UpdateValidation(); }
+        }
     }
     private async Task CheckReleaseAsync()
     {
@@ -489,32 +565,62 @@ public sealed class MainForm : Form
             if (_suggestions.Visible) throw new Exception("Selecting a component did not close the dropdown.");
             report.Add("PASS autocomplete opens while typing, supports arrows/Enter, and dismisses with Escape or selection");
             _year.Text = "2026"; _month.SelectedItem = "09"; _quantity.Text = "42";
+            if (_decimalQuantity.Checked || _quantity.DecimalPlaces != 0 || _quantity.Text.Contains('.') || _quantity.Text.Contains(','))
+                throw new Exception("Quantity must default to whole numbers without a decimal suffix.");
+            _decimalQuantity.Checked = true;
+            _quantity.Value = 12.345m;
+            if (_quantity.DecimalPlaces != 3 || GetRequest(out _)?.Quantity != 12.345m)
+                throw new Exception("Decimal mode did not pass the fractional quantity to printing.");
+            _decimalQuantity.Checked = false;
+            if (_quantity.DecimalPlaces != 0 || _quantity.Value != 12m || GetRequest(out _)?.Quantity != 12m)
+                throw new Exception("Disabling decimal mode retained a hidden fractional quantity.");
+            _quantity.Value = 42;
+            report.Add("PASS whole-number default and decimal quantity toggle without hidden fractions");
             if (!_print.Enabled) throw new Exception("Valid sample dry run is disabled: " + _validation.Text);
             if (_pn.Text != "OEPS101234 - EXPENSIVE ITEM💰") throw new Exception("The expensive-item suffix is missing from the OEPS PN display.");
             if (_jobRenderer!.Render(GetRequest(out _)!, _session.Selected!.IsExpensive).LabelCount != 2) throw new Exception("An expensive component must generate two labels.");
             report.Add("PASS expensive-item display suffix and two-label dry-run job");
             await SubmitAsync();
             if (!Directory.EnumerateFiles(_paths.DryRunDirectory, "*.zpl").Any()) throw new Exception("Dry run file missing.");
-            report.Add("PASS explicit pairing selection, date/quantity entry and dry-run file generation");
+            report.Add("PASS explicit pairing selection, lot/quantity entry and dry-run file generation");
+            _packaging.SelectedItem = "Tray";
+            var lotBeforeRefresh = LabelValues.FormatLot(GetRequest(out _)!);
             await RefreshAsync();
-            if (_year.Text != "2026" || _month.Text != "09" || _quantity.Text != "42") throw new Exception("Refresh erased entries.");
+            if (_year.Text != "2026" || _month.Text != "09" || _quantity.Value != 42 || _packaging.Text != "Tray"
+                || _dateHint.Text != "Print as " + lotBeforeRefresh || _renderer!.Render(GetRequest(out _)!).LotCode != lotBeforeRefresh)
+                throw new Exception("Refresh erased entries or lot preview differs from the label.");
+            if (_month.Width != _year.Width || _monthUnavailable.Left != _month.Left || _yearUnavailable.Left != _year.Left
+                || _monthUnavailable.CheckAlign != ContentAlignment.MiddleLeft || _yearUnavailable.CheckAlign != ContentAlignment.MiddleLeft)
+                throw new Exception("Year width or unavailable checkbox alignment is incorrect.");
+            if (!_year.Items.Cast<string>().SequenceEqual(Enumerable.Range(2020, DateTime.Now.Year - 2020 + 1).Select(y => y.ToString("0000"))))
+                throw new Exception("Year options must run from 2020 to the current year.");
+            report.Add("PASS packaging selection, stable lot across refresh and matching printed QR/preview");
             _search.Text += "x";
             if (_session.Selected is not null || _print.Enabled) throw new Exception("Search edit retained stale selection.");
             report.Add("PASS refresh preserves form entries; editing search invalidates selection");
             if (_dryRun.Enabled) throw new Exception("Sample mode permits production.");
             report.Add("PASS sample production lock");
             _search.Text = "OEPS101234"; ShowSuggestions(); _suggestions.SelectedIndex = 0; SelectSuggestion();
-            if (_dateHint.Text != "Prints as 0926") throw new Exception("Inline reception date hint is inconsistent.");
-            _dateUnavailable.Checked = true;
+            if (!_dateHint.Text.StartsWith("Print as 0926_")) throw new Exception("Inline reception date hint is inconsistent.");
+            _monthUnavailable.Checked = true;
             await RefreshAsync();
-            if (!_dateUnavailable.Checked || _month.Enabled || _year.Enabled || _dateHint.Text != "Prints as 0000" || !_print.Enabled)
-                throw new Exception("Unavailable reception date UI or refresh behavior is incorrect.");
+            if (!_monthUnavailable.Checked || _month.Enabled || !_year.Enabled || !_dateHint.Text.StartsWith("Print as 0026_") || !_print.Enabled
+                || _renderer!.Render(GetRequest(out _)!).DateMmyy != "0026")
+                throw new Exception("Month-only unavailability must print 00YY and survive refresh.");
+            _yearUnavailable.Checked = true;
+            if (_month.Enabled || _year.Enabled || !_dateHint.Text.StartsWith("Print as 0000_"))
+                throw new Exception("Both unavailable fields must print 0000.");
             if (_renderer!.Render(GetRequest(out _)!).DateMmyy != "0000") throw new Exception("Unavailable date did not reach the renderer.");
             await SubmitAsync();
-            _dateUnavailable.Checked = false;
-            if (!_month.Enabled || !_year.Enabled || _month.Text != "09" || _year.Text != "2026" || _dateHint.Text != "Prints as 0926")
+            _monthUnavailable.Checked = false;
+            await RefreshAsync();
+            if (!_month.Enabled || _year.Enabled || !_yearUnavailable.Checked || !_dateHint.Text.StartsWith("Print as 0900_") || !_print.Enabled
+                || _renderer!.Render(GetRequest(out _)!).DateMmyy != "0900")
+                throw new Exception("Year-only unavailability must print MM00 and survive refresh.");
+            _yearUnavailable.Checked = false;
+            if (!_month.Enabled || !_year.Enabled || _month.Text != "09" || _year.Text != "2026" || !_dateHint.Text.StartsWith("Print as 0926_"))
                 throw new Exception("Toggling date availability did not preserve the entered date.");
-            report.Add("PASS unavailable date prints 0000, survives refresh, and restores entered date when unchecked");
+            report.Add("PASS separate month/year zero checkboxes, preserved selections and printed 00YY/MM00/0000");
             var originalSelection = _session.Selected!;
             _session.Select(originalSelection with { Description = "Crystal [package information] [stock]" });
             UpdateValidation();
@@ -529,6 +635,14 @@ public sealed class MainForm : Form
             _jobStatus.Text = "";
             using var screenshot = CaptureWindow();
             Directory.CreateDirectory(_paths.UserDataRoot); screenshot.Save(Path.Combine(_paths.UserDataRoot, "ui-smoke.png"));
+            ClientSize = new Size((int)(560 * DeviceDpi / 96f), (int)(530 * DeviceDpi / 96f));
+            PerformLayout();
+            var hintSize = TextRenderer.MeasureText(_dateHint.Text, _dateHint.Font,
+                new Size(_dateHint.ClientSize.Width, int.MaxValue), TextFormatFlags.WordBreak);
+            if (hintSize.Height > _dateHint.ClientSize.Height) throw new Exception("Lot preview is clipped at minimum window width.");
+            using var minimumScreenshot = CaptureWindow();
+            minimumScreenshot.Save(Path.Combine(_paths.UserDataRoot, "ui-smoke-minimum.png"));
+            report.Add("PASS complete lot preview fits the minimum window width");
         }
         catch (Exception ex) { report.Add("FAIL " + ex); Environment.ExitCode = 1; }
         finally { Directory.CreateDirectory(_paths.UserDataRoot); await File.WriteAllLinesAsync(Path.Combine(_paths.UserDataRoot, "ui-smoke.txt"), report); Close(); }

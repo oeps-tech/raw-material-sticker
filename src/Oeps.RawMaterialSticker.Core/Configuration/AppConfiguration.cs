@@ -12,12 +12,15 @@ public sealed class AppConfiguration
     public const string DefaultExpensiveCsvUrl = "https://docs.google.com/spreadsheets/d/1c0Wh_HY_bz6y2l1Jr0D6rPmvKgyRPSEPphRE5ZAqndk/gviz/tq?tqx=out:csv&sheet=expensive%20components&headers=0&tq=select%20A%20where%20A%20is%20not%20null%20label%20A%20%27OEPS_PN%27";
     public string ExpensiveSpreadsheetCsvUrl { get; set; } = DefaultExpensiveCsvUrl;
     public HeaderAliases HeaderAliases { get; set; } = new();
-    public bool DryRun { get; set; } = true;
+    public bool DryRun { get; set; }
     public bool SampleMode { get; set; }
     public string GitHubOwner { get; set; } = "oeps-tech";
     public string GitHubRepository { get; set; } = "raw-material-sticker";
     public string PackagePrefix { get; set; } = "Oeps.RawMaterialSticker";
     public PrinterConfiguration Printer { get; set; } = new();
+    public PrinterConfiguration? ExpensivePrinter { get; set; }
+    public string? NormalProfilePath { get; set; }
+    public string? ExpensiveProfilePath { get; set; }
 
     /// <summary>User appsettings.json values override the packaged configuration.</summary>
     public static AppConfiguration Load(string baseDirectory, string userDataRoot)
@@ -46,6 +49,21 @@ public sealed class AppConfiguration
         var configuration = merged.Deserialize<AppConfiguration>(JsonStorage.Options) ?? new();
         configuration.HeaderAliases ??= new();
         configuration.Printer ??= new();
+        // Profile selection and contents belong to the release, not workstation overrides.
+        var packaged = File.Exists(packagePath)
+            ? JsonSerializer.Deserialize<AppConfiguration>(File.ReadAllText(packagePath), JsonStorage.Options)
+            : null;
+        configuration.NormalProfilePath = packaged?.NormalProfilePath;
+        configuration.ExpensiveProfilePath = packaged?.ExpensiveProfilePath;
+        PrinterConfiguration LoadProfile(string relativePath)
+        {
+            var path = Path.Combine(baseDirectory, relativePath);
+            if (!File.Exists(path)) throw new InvalidDataException($"Label profile not found: {relativePath}");
+            return JsonSerializer.Deserialize<PrinterConfiguration>(File.ReadAllText(path), JsonStorage.Options)
+                ?? throw new InvalidDataException($"Invalid label profile: {relativePath}");
+        }
+        if (configuration.NormalProfilePath is not null) configuration.Printer = LoadProfile(configuration.NormalProfilePath);
+        if (configuration.ExpensiveProfilePath is not null) configuration.ExpensivePrinter = LoadProfile(configuration.ExpensiveProfilePath);
         return configuration;
     }
 
@@ -72,9 +90,15 @@ public sealed class HeaderAliases
 
 public sealed class PrinterConfiguration
 {
+    public decimal LabelWidthMm { get; set; } = 30;
+    public decimal LabelHeightMm { get; set; } = 50;
+    public int OffsetXDots { get; set; }
+    public int OffsetYDots { get; set; }
+    public string? GraphicOption { get; set; }
     public string? Model { get; set; }
     public int? Dpi { get; set; }
     public string? QueueName { get; set; }
+    public bool UseSelectedPrinter { get; set; } = true;
     public string? Connection { get; set; }
     public bool ProductionValidated { get; set; }
     public string TemplatePath { get; set; } = "templates/production-label.zpl";
@@ -86,6 +110,7 @@ public sealed class PrinterConfiguration
     public string? MediaTracking { get; set; }
     public string? PrintMethod { get; set; }
     public string? LongestValidatedOepsPn { get; set; }
+    public bool RequireTestedPnLimit { get; set; } = true;
     public string? ValidationNotes { get; set; }
 }
 

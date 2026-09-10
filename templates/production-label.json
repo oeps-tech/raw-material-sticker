@@ -1,0 +1,23 @@
+{
+    "model":  "Zebra ZD421",
+    "dpi":  300,
+    "queueName":  "Zebra ZD421 Production",
+    "connection":  "network",
+    "labelWidthMm":  30,
+    "labelHeightMm":  50,
+    "printSpeedIps":  2,
+    "darkness":  23,
+    "graphicOption":  "Photo",
+    "printMethod":  "thermal-transfer",
+    "mediaTracking":  "web",
+    "offsetXDots":  0,
+    "offsetYDots":  0,
+    "templatePath":  "templates/production-label.zpl",
+    "productionValidated":  true,
+    "validatedTemplateSha256":  "e58747b41b847d8ce75a9715b5acb3d2cff5eff169ae280d51fdcf48c0c83131",
+    "validatedExpensiveTemplateSha256":  null,
+    "longestValidatedOepsPn":  null,
+    "validationNotes":  "Production authorized by user on 2026-09-08. Layout replaced from user-supplied exports on 2026-09-09 for lot/2D codes; the revised layout has not yet been physically tested. Runtime template hash updated to identify this revision.",
+    "requireTestedPnLimit":  false,
+    "useSelectedPrinter":  true
+}
