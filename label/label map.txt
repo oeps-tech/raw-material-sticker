@@ -6,20 +6,21 @@ MPN: Manufacturer part number
 
 === L3 ===
 
-OEPS_PN_Datamatrix: Serial number without spaces
+Datamatrix: <version>*<serial_number>*<lot>*<quantity>*<checksum>
 OEPS_PN: Serial number in the format [1]
 MPN: Manufacturer part number
-OEPS_Lot_QR: Lot in the format [2]
-Lot_MMYY: Lot's MMYY
-Lot_Packing: Lot's Packaging (four chars)
-Lot_Random: Lot's Random (four chars)
-Quantity: Quantity (if decimal, use always a dot '.')
-OEPS_Quantity_Datamatrix: Quantity (append a '0' before the quantity) (if decimal, use always a dot '.')
+Lot_Packaging: The package as is (Other, Bag, Tray, ...)
+Lot: The entire lot in the format [2]
+Quantity: Quantity (if decimal, use always a dot '.') without extra zeros, i.e., remove any zeros at left and right, except "0.123".
 
+<version> - 1
+<quantity> - The minimum quantity length is 6 digits and the maximum is 10, add zeros before if needed to complete this request. Always use a '.' as separation if need to use decimal numbers.
 
 [1]
-If 10 chars: XXXX XX XXXX
-If 11 chars: XXXX XXX XXXX
+If 10 chars:
+	If: Y is a letter: XXXX YXX XXX
+	If: Y is a number: XXXX YX XXXX
+If 11 chars: XXXX XX XXXXX
 
 [2]
 MMYY_PACK_RAND
@@ -28,14 +29,10 @@ PACK is mapped in this way:
 Reel > REEL
 Tube > TUBE
 Tape > TAPE
-Bag > _BAG
-Box > _BOX
+Bag > BAG
+Box > BOX
 Tray > TRAY
 Spool > SPOL
 Other > OTHR
 
-RAND are four random letters (upper or lower case) or numbers.
-
-Fix: OEPS PN can have 12 or 13 characters.
-If using 12, L3 expensive 'OEPS_PN_text' and L3 'OEPS_PN' should be written as XXXX XX XXXX
-If using 13, L3 expensive 'OEPS_PN_text' and L3 'OEPS_PN' should be written as XXXX XXX XXXX
+RAND are four random letters (upper case only) or numbers.
