@@ -11,16 +11,16 @@ public static class LotTests
     {
         var normal = new LabelRenderer(LabelRenderer.BuiltInTemplate);
         var expensive = new ExpensiveLabelRenderer(ExpensiveLabelRenderer.BuiltInTemplate);
-        foreach (var (pn, expected) in new[] { ("OEPS011234", "OEPS 01 1234"), ("OEPSA011234", "OEPS A01 1234"),
-            ("OEPSA01123", "OEPS A01 123"), ("OEPSB02001", "OEPS B02 001") })
+        foreach (var (pn, l3Text, expensiveText) in new[] { ("OEPS011234", "OEPS 01 1234", "OEPS 01 1234"),
+            ("OEPSA011234", "OEPS A0 11234", "OEPS A01 1234"),
+            ("OEPSA01123", "OEPS A01 123", "OEPS A01 123"), ("OEPSB02001", "OEPS B02 001", "OEPS B02 001") })
         {
             var request = new LabelRequest(pn, "MPN", 9, 2026, 1);
-            var textField = "^FD" + LabelValues.EscapeField(expected) + "^FS";
             var l3 = normal.Render(request);
             var l3Expensive = expensive.Render(request);
-            Assert.True(l3.Zpl.Contains(textField));
-            Assert.True(l3Expensive.Contains(textField));
-            Assert.True(l3.Zpl.Contains("^FD" + LabelValues.EscapeField(pn) + "^FS"));
+            Assert.True(l3.Zpl.Contains("^FD" + LabelValues.EscapeField(l3Text) + "^FS"));
+            Assert.True(l3Expensive.Contains("^FD" + LabelValues.EscapeField(expensiveText) + "^FS"));
+            Assert.Equal(pn, l3.BarcodePayload.Split('*')[1]);
             Assert.True(l3Expensive.Contains("^FD" + LabelValues.EscapeField(Code128Encoder.Encode(pn).ZplFieldData) + "^FS"));
         }
     }
@@ -28,13 +28,14 @@ public static class LotTests
     [Test]
     public static void LotMappingsPreserveExactCodesAndRejectInvalidInputs()
     {
-        var request = new LabelRequest("OEPS010243", "MPN", 9, 2026, 1, Packaging: "Tray", RandomCode: "t8sQ");
-        foreach (var (name, code) in new[] { ("Reel", "REEL"), ("Tube", "TUBE"), ("Tape", "TAPE"), ("Bag", "_BAG"),
-            ("Box", "_BOX"), ("Tray", "TRAY"), ("Spool", "SPOL"), ("Other", "OTHR") })
-            Assert.Equal($"0926_{code}_t8sQ", LabelValues.FormatLot(request with { Packaging = name }));
-        Assert.Equal("0000_TRAY_t8sQ", LabelValues.FormatLot(request with { MonthUnavailable = true, YearUnavailable = true, Month = 0, Year = 0 }));
-        Assert.Equal("0026_TRAY_t8sQ", LabelValues.FormatLot(request with { MonthUnavailable = true, Month = 0 }));
-        Assert.Equal("0900_TRAY_t8sQ", LabelValues.FormatLot(request with { YearUnavailable = true, Year = 0 }));
+        var request = new LabelRequest("OEPS010243", "MPN", 9, 2026, 1, Packaging: "Tray", RandomCode: "T8SQ");
+        foreach (var (name, code) in new[] { ("Reel", "REEL"), ("Tube", "TUBE"), ("Tape", "TAPE"), ("Bag", "BAG"),
+            ("Box", "BOX"), ("Tray", "TRAY"), ("Spool", "SPOL"), ("Other", "OTHR") })
+            Assert.Equal($"0926-{code}-T8SQ", LabelValues.FormatLot(request with { Packaging = name }));
+        Assert.Equal("0000-TRAY-T8SQ", LabelValues.FormatLot(request with { MonthUnavailable = true, YearUnavailable = true, Month = 0, Year = 0 }));
+        Assert.Equal("0026-TRAY-T8SQ", LabelValues.FormatLot(request with { MonthUnavailable = true, Month = 0 }));
+        Assert.Equal("0900-TRAY-T8SQ", LabelValues.FormatLot(request with { YearUnavailable = true, Year = 0 }));
+        Assert.Throws<ArgumentException>(() => LabelValues.FormatLot(request with { RandomCode = "t8sQ" }));
         Assert.Throws<ArgumentOutOfRangeException>(() => LabelValues.FormatLot(request with { MonthUnavailable = true, Year = 0 }));
         Assert.Throws<ArgumentOutOfRangeException>(() => LabelValues.FormatLot(request with { YearUnavailable = true, Month = 0 }));
         Assert.Throws<ArgumentException>(() => LabelValues.FormatLot(request with { Packaging = "Unknown" }));
@@ -51,34 +52,37 @@ public static class LotTests
         {
             CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("pt-PT");
             var renderer = new LabelRenderer(LabelRenderer.BuiltInTemplate);
-            var request = new LabelRequest("OEPS010243", "MPN", 9, 2026, 100.245m, Packaging: "Bag", RandomCode: "t8sQ");
+            var request = new LabelRequest("OEPS010243", "MPN", 9, 2026, 100.245m, Packaging: "Bag", RandomCode: "T8SQ");
             var result = renderer.Render(request);
-            Assert.Equal("0926__BAG_t8sQ", result.LotCode);
-            Assert.True(result.Zpl.Contains("^FDLA," + LabelValues.EscapeField(result.LotCode) + "^FS"));
-            Assert.True(result.Zpl.Contains("^FD" + LabelValues.EscapeField("0100.245") + "^FS"));
+            Assert.Equal("0926-BAG-T8SQ", result.LotCode);
+            Assert.Equal("1*OEPS010243*0926-BAG-T8SQ*100.245*32621FAC", result.BarcodePayload);
+            Assert.True(result.Zpl.Contains("^FD" + LabelValues.EscapeField(result.BarcodePayload) + "^FS"));
+            Assert.True(result.Zpl.Contains("^FD" + LabelValues.EscapeField("Bag") + "^FS"));
             Assert.True(result.Zpl.Contains("^FD" + LabelValues.EscapeField("100.245") + "^FS"));
-            Assert.True(renderer.Render(request with { Quantity = 0 }).Zpl.Contains("^FD^FS"));
-            var zero = renderer.Render(request with { Quantity = 0 }).Zpl;
-            Assert.False(zero.Contains("^FT204,115"));
-            Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(zero, @"\^BX").Count);
-            Assert.True(zero.Contains("^FD" + LabelValues.EscapeField(request.OepsPn) + "^FS"));
+            Assert.Throws<ArgumentOutOfRangeException>(() => renderer.Render(request with { Quantity = 0 }));
+            Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(result.Zpl, @"\^BX").Count);
+            Assert.False(result.Zpl.Contains("^BQ"));
             Assert.Equal(result.Zpl, renderer.Render(request).Zpl);
         }
         finally { CultureInfo.CurrentCulture = previous; }
     }
 
     [Test]
-    public static void QuantityDataMatrixPadsToSevenCharactersIncludingDecimalPoint()
+    public static void QuantityDataMatrixPadsToSevenCharactersWithMaximumTenDigits()
     {
-        foreach (var (quantity, expected) in new[] { (0m, ""), (1m, "0000001"), (42m, "0000042"),
-            (123456m, "0123456"), (1.5m, "00001.5"), (0.125m, "000.125"), (100.245m, "0100.245") })
+        foreach (var (quantity, expected) in new[] { (1m, "0000001"), (42m, "0000042"),
+            (123456m, "0123456"), (1.5m, "00001.5"), (0.125m, "000.125"), (100.245m, "100.245"),
+            (9999999999m, "9999999999"), (0.00211234m, "0.00211234") })
         {
             var payload = LabelValues.FormatQuantityDataMatrix(quantity);
             Assert.Equal(expected, payload);
-            if (quantity == 0) continue;
-            Assert.True(payload.Length >= 7);
+            Assert.True(payload.Length >= 7 && payload.Count(char.IsAsciiDigit) <= 10);
             Assert.Equal(quantity, decimal.Parse(payload, CultureInfo.InvariantCulture));
         }
+        Assert.Throws<ArgumentException>(() => LabelValues.FormatQuantityDataMatrix(10000000000m));
+        Assert.Throws<ArgumentException>(() => LabelValues.FormatQuantityDataMatrix(0));
+        Assert.Throws<ArgumentException>(() => LabelValues.FormatQuantityDataMatrix(0.1234567891m));
+        Assert.Equal("1.5", LabelValues.FormatQuantity(001.5000m));
     }
 
     [Test]
@@ -88,6 +92,7 @@ public static class LotTests
         var random = session.RandomCode;
         Assert.Equal(4, random.Length);
         Assert.True(random.All(char.IsAsciiLetterOrDigit));
+        Assert.False(random.Any(char.IsAsciiLetterLower));
         session.Revalidate([]);
         Assert.Equal(random, session.RandomCode);
         session.Packaging = "Tray";

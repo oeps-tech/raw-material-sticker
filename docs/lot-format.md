@@ -1,52 +1,73 @@
-# Lot and revised L3 layout
+# Lot and L3 format (September 25, 2026)
 
-Lots use `MMYY_PACK_RAND`. September 2026 with Tray packaging could print
-`0926_TRAY_t8sQ`, matching the label map and its `Lot_MMYY` object.
+L3 has one Data Matrix and no QR codes. It prints the formatted PN, MPN, full
+packaging name, full lot, and quantity using the updated `label/L3.prn` layout.
+L3 expensive retains its existing template, PN text grouping, barcode and MPN.
 
-| Packaging | Printed code |
+Lots use `MMYY-PACK-RAND`, for example `0926-TRAY-Q5R2`. The user confirmed hyphens,
+as recorded in the updated map. RAND is four random
+uppercase ASCII letters or digits. It stays stable during edits and refreshes;
+a successful print submission (or diagnostic dry run) generates the next suffix.
+These short random codes do not guarantee global uniqueness.
+
+| Packaging | Lot code |
 | --- | --- |
 | Reel | REEL |
 | Tube | TUBE |
 | Tape | TAPE |
-| Bag | _BAG |
-| Box | _BOX |
+| Bag | BAG |
+| Box | BOX |
 | Tray | TRAY |
 | Spool | SPOL |
 | Other | OTHR |
 
-Codes preserve the supplied mapping exactly: Bag and Box create two consecutive
-underscores in the complete lot. Spool uses the corrected four-character code SPOL. RAND contains
-four randomly generated ASCII letters or digits, preserving case. It stays
-stable during input changes and database refreshes. A successful print submission
-(or diagnostic dry run) generates the next suffix; a failed submission preserves it.
-These short random codes do not guarantee global uniqueness.
+The packaging text prints the name as selected (`Bag`, `Tray`, etc.). Other is the
+initial choice. Month/Year have independent `Use '00'` checkboxes: September 2026
+becomes `0026` with unknown month, `0900` with unknown year, or `0000` with both
+unknown. The full lot shown in the GUI is the same lot in print and the Data Matrix.
 
-Separate `Use '00'` checkboxes below Month and Year disable their corresponding
-selector and replace only that segment with `00`. For September 2026, unknown
-month prints `0026`, unknown year prints `0900`, and both unknown print `0000`.
-Unchecking restores the previous selection. Year choices run from 2020 through
-the computer's current year, inclusive. Packaging and RAND remain present. The
-preview and printed QR use the same complete lot. Other is the initial packaging
-choice.
+L3 follows the new map: ten-character PNs starting with a letter after OEPS use
+`XXXX XXX XXX`; numeric ones use `XXXX XX XXXX`. Eleven-character PNs use
+`XXXX XX XXXXX`, e.g. `OEPSA010123` becomes `OEPS A0 10123`. L3 expensive keeps its
+previous grouping (`OEPS A01 0123` for the same PN). Barcode serial numbers keep
+the original case and leading zeros, without display spaces.
 
-The revised L3 template comes from the supplied exports in `label/`. It contains
-the raw OEPS PN in a Data Matrix, a formatted PN and MPN, the complete lot in a
-QR code, separate date/packaging/random text, quantity text and a quantity Data
-Matrix. Numeric PNs such as `OEPS011234` print as `OEPS 01 1234`;
-`OEPSA011234` prints as `OEPS A01 1234`. The shorter letter-prefixed form
-`OEPSA01123` prints as `OEPS A01 123` (a letter followed by five digits after OEPS).
-Both labels use these text formats; barcode payloads retain the original PN.
-Quantity accepts up to three decimal places in the GUI and prints
-with a decimal dot when the initially unchecked `Use decimal number` option is
-selected. Otherwise only whole numbers are displayed and accepted. Unchecking
-the option drops the fractional part of an entered quantity.
+Quantity must be greater than zero and is always printed. Human-readable quantity
+has no padding or trailing fractional zeros: `1.500` prints `1.5`. The GUI's
+`Use decimal number` option defaults off. It permits up to nine decimal places;
+quantities are limited to ten digits, counting the zero before a decimal point.
+The decimal point does not count as a digit. Unchecking decimal mode drops the
+fractional part.
 
-Zero leaves quantity text blank and omits the quantity Data Matrix entirely.
-Positive quantities retain their required `0` prefix and receive further leading
-zeros until the payload contains at least seven characters, including the decimal
-dot when present. Examples: `42` becomes `0000042`, `1.5` becomes `00001.5`, and
-`100.245` becomes `0100.245`. Quantity text is not padded.
+## Data Matrix version 1
 
-L3 expensive retains its PN barcode, formatted PN and MPN, with positions from the
-updated export. It still follows L3 when the selected component is expensive.
-Printer profiles retain their separate speed, darkness, routing and media settings.
+The scanner receives `1*<serial_number>*<lot>*<quantity>*<checksum>`.
+Encoded quantity has at least 7 characters, with leading zeros added as needed.
+The decimal dot counts toward this minimum; the maximum remains 10 digits,
+excluding the dot. There is no additional mandatory zero prefix.
+
+| Entered quantity | Printed quantity | Encoded quantity |
+| --- | --- | --- |
+| 1 | 1 | 0000001 |
+| 42 | 42 | 0000042 |
+| 1.500 | 1.5 | 00001.5 |
+| 100.245 | 100.245 | 100.245 |
+| 0.00211234 | 0.00211234 | 0.00211234 |
+
+The CRC-32/IEEE checksum is compatible with Python's
+[`zlib.crc32`](https://docs.python.org/3/library/zlib.html#zlib.crc32). It covers the
+exact ASCII bytes of `1*<serial_number>*<lot>*<encoded quantity>` before ZPL
+escaping, preserving case and leading zeros. No spaces, newline or trailing `*`
+are added. The unsigned CRC is eight uppercase hexadecimal characters.
+
+User-supplied unpadded reference:
+`1*OEPSA010123*0926-TRAY-Q5R2*1*D91C90D6`
+
+Actual label after the map's quantity padding:
+`1*OEPSA010123*0926-TRAY-Q5R2*0000001*65C0007E`
+
+The Data Matrix uses `!` as its ZPL control escape character, which cannot occur in
+the protocol, so literal data is not interpreted as an escape sequence. Variable
+fields are byte-escaped with `^FH` after the checksum is calculated. Speed/darkness
+remain controlled by packaged printer profiles; the exported initialization commands
+are not imported. Local queue offsets continue to apply to the complete label.

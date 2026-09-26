@@ -1,6 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0-windows</TargetFramework></PropertyGroup>
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
+    <Compile Include="../../src/Oeps.RawMaterialSticker.App/ScannerReadSound.cs" Link="ScannerReadSound.cs" />
+    <Compile Include="../../src/Oeps.RawMaterialSticker.App/NativeScannerTone.cs" Link="NativeScannerTone.cs" />
+    <Reference Include="Scanner.Client"><HintPath>../../client-sdk/Scanner.Client.dll</HintPath><Private>true</Private></Reference>
     <ProjectReference Include="../../src/Oeps.RawMaterialSticker.Core/Oeps.RawMaterialSticker.Core.csproj" />
     <Content Include="../../templates/*.zpl" Link="templates/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

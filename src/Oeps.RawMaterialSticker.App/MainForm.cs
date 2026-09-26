@@ -1,8 +1,10 @@
 using System.Globalization;
 using System.Reflection;
 using System.Drawing.Printing;
+using System.Net;
 using Oeps.RawMaterialSticker.App.Printing;
 using Oeps.RawMaterialSticker.Core;
+using Oeps.RawMaterialSticker.Core.Camera;
 using Oeps.RawMaterialSticker.Core.Configuration;
 using Oeps.RawMaterialSticker.Core.Data;
 using Oeps.RawMaterialSticker.Core.Printing;
@@ -23,6 +25,9 @@ public sealed class MainForm : Form
     private readonly CancellationTokenSource _closing = new();
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 1000 };
     private readonly ComboBox _printer = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, AccessibleName = "Printer" };
+    private readonly ComboBox _cameraServer = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, AccessibleName = "Camera server" };
+    private readonly TextBox _cameraIp = new() { Dock = DockStyle.Fill, PlaceholderText = "Server IP address", AccessibleName = "Camera server IP address" };
+    private readonly Button _camera = new() { Text = "Update fields from camera", Dock = DockStyle.Fill, FlatStyle = FlatStyle.Flat, BackColor = Color.White, ForeColor = Color.FromArgb(0, 93, 174) };
     private readonly Button _printerSettings = new() { Text = "⚙", Dock = DockStyle.Fill, FlatStyle = FlatStyle.Flat, AccessibleName = "Printer offsets", Margin = new Padding(6, 0, 0, 0), TabStop = true };
     private readonly RadioButton _oepsMode = SearchModeButton("&OEPS PN");
     private readonly RadioButton _mpnMode = SearchModeButton("&MPN");
@@ -36,7 +41,7 @@ public sealed class MainForm : Form
     private readonly ComboBox _month = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 64, AccessibleName = "Reception month" };
     private readonly ComboBox _year = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 64, AccessibleName = "Reception year" };
     private readonly ComboBox _packaging = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 84, AccessibleName = "Lot packaging" };
-    private readonly NumericUpDown _quantity = new() { Width = 77, Minimum = 0, Maximum = int.MaxValue, DecimalPlaces = 0, AccessibleName = "Component quantity" };
+    private readonly NumericUpDown _quantity = new QuantityInput() { Width = 77, Minimum = 0, Maximum = 9999999999m, DecimalPlaces = 0, AccessibleName = "Component quantity" };
     private readonly CheckBox _decimalQuantity = new() { Text = "Use decimal number", AutoSize = true, Margin = Padding.Empty, AccessibleName = "Use decimal quantity" };
     private readonly CheckBox _dryRun = new() { Text = "&Dry run", AutoSize = true };
     private readonly CheckBox _monthUnavailable = new() { Text = "Use '00'", AutoSize = true, CheckAlign = ContentAlignment.MiddleLeft, AccessibleName = "Use 00 for month", Margin = Padding.Empty };
@@ -98,6 +103,10 @@ public sealed class MainForm : Form
         _dryRun.Enabled = !config.SampleMode;
         _oepsMode.Checked = _settings.SearchMode == SearchMode.OepsPn; _mpnMode.Checked = !_oepsMode.Checked;
         _extendedDescription.Checked = _settings.ExtendedDescription;
+        _cameraServer.Items.AddRange(["Local computer", "External"]);
+        _cameraServer.SelectedIndex = _settings.CameraExternal ? 1 : 0;
+        _cameraIp.Text = _settings.CameraIp;
+        _cameraIp.Enabled = _settings.CameraExternal;
         StyleSearchModes();
         LoadPrinters();
         try
@@ -129,6 +138,8 @@ public sealed class MainForm : Form
         _printer.SelectedIndexChanged += (_, _) => { _printerError = null; UpdateValidation(); };
         _printer.DropDown += (_, _) => LoadPrinters();
         _printerSettings.Click += (_, _) => ConfigurePrinterOffsets();
+        _cameraServer.SelectedIndexChanged += (_, _) => _cameraIp.Enabled = _cameraServer.SelectedIndex == 1;
+        _camera.Click += (_, _) => OpenCamera();
         _toolTip.SetToolTip(_printerSettings, "Configure offsets for the selected printer");
         _month.SelectedIndexChanged += (_, _) => { _session.Month = _month.Text; UpdateValidation(); };
         _year.TextChanged += (_, _) => { _session.Year = _year.Text; UpdateValidation(); };
@@ -150,7 +161,7 @@ public sealed class MainForm : Form
         _decimalQuantity.CheckedChanged += (_, _) =>
         {
             if (!_decimalQuantity.Checked) _quantity.Value = decimal.Truncate(_quantity.Value);
-            _quantity.DecimalPlaces = _decimalQuantity.Checked ? 3 : 0;
+            _quantity.DecimalPlaces = _decimalQuantity.Checked ? 9 : 0;
             UpdateValidation();
         };
         _dryRun.CheckedChanged += (_, _) => UpdateValidation();
@@ -235,7 +246,14 @@ public sealed class MainForm : Form
         _printerSettings.FlatAppearance.BorderColor = Color.FromArgb(199, 207, 217);
         printerControls.Controls.Add(_printer, 0, 0); printerControls.Controls.Add(_printerSettings, 1, 0);
         printerRow.Controls.Add(printerControls, 1, 0);
-        Row(printerRow, 38); Row(new Panel(), 8);
+        Row(printerRow, 38);
+        var cameraRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Margin = Padding.Empty, Padding = new Padding(12, 0, 0, 0) };
+        cameraRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
+        cameraRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
+        cameraRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        cameraRow.Controls.Add(Caption("Camera server"), 0, 0);
+        cameraRow.Controls.Add(_cameraServer, 1, 0); cameraRow.Controls.Add(_cameraIp, 2, 0);
+        Row(cameraRow, 36); Row(new Panel(), 8);
         var fields = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 8, BackColor = Color.White, Padding = new Padding(12), Margin = Padding.Empty };
         fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130)); fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         fields.Paint += (_, e) =>
@@ -284,7 +302,7 @@ public sealed class MainForm : Form
         date.Controls.Add(_monthUnavailable, 0, 1); date.Controls.Add(_yearUnavailable, 1, 1); Field("&Lot (batch)", date, 2);
         var quantityRow = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = new Padding(0, 6, 0, 0) };
         _quantity.Margin = new Padding(0, 0, 12, 0);
-        quantityRow.Controls.AddRange([_quantity, new Label { Text = "Components in package (0 = unknown)", AutoSize = true, ForeColor = Color.FromArgb(87, 99, 114), Margin = new Padding(0, 5, 0, 0) }]);
+        quantityRow.Controls.AddRange([_quantity, new Label { Text = "Components in package", AutoSize = true, ForeColor = Color.FromArgb(87, 99, 114), Margin = new Padding(0, 5, 0, 0) }]);
         var quantityFields = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1, Margin = Padding.Empty };
         quantityFields.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
         quantityFields.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -294,10 +312,14 @@ public sealed class MainForm : Form
         Row(fields, 390); Row(new Panel(), 6);
         var buttons = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
         buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45)); buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
-        _refresh.Margin = new Padding(0, 0, 8, 0); _print.Margin = Padding.Empty;
-        _refresh.FlatAppearance.BorderColor = _refresh.ForeColor; _print.FlatAppearance.BorderSize = 0;
+        _camera.Margin = _refresh.Margin = new Padding(0, 0, 8, 0); _print.Margin = Padding.Empty;
+        _camera.FlatAppearance.BorderColor = _refresh.FlatAppearance.BorderColor = _refresh.ForeColor; _print.FlatAppearance.BorderSize = 0;
         _print.Font = new Font(Font, FontStyle.Bold);
-        buttons.Controls.Add(_refresh, 0, 0); buttons.Controls.Add(_print, 1, 0); Row(buttons, 38);
+        buttons.Controls.Add(_camera, 0, 0); buttons.Controls.Add(_print, 1, 0); Row(buttons, 38);
+        Row(new Panel(), 4);
+        var databaseButtons = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
+        databaseButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45)); databaseButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
+        databaseButtons.Controls.Add(_refresh, 0, 0); Row(databaseButtons, 38);
         var validationRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
         validationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); validationRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         _validation.Font = new Font(Font.FontFamily, 8.5f); _jobStatus.Font = _validation.Font;
@@ -420,12 +442,13 @@ public sealed class MainForm : Form
         int year = 0, month = 0;
         if (!_yearUnavailable.Checked && (_year.Text.Length != 4 || !int.TryParse(_year.Text, NumberStyles.None, CultureInfo.InvariantCulture, out year))) { error = "Select a reception year."; return null; }
         if (!_monthUnavailable.Checked && !int.TryParse(_month.Text, out month)) { error = "Select a reception month."; return null; }
-        if (!decimal.TryParse(_quantity.Text.Replace(',', '.'), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var quantity) || quantity < 0) { error = "Enter a quantity; use 0 if unavailable."; return null; }
+        if (!decimal.TryParse(_quantity.Text.Replace(',', '.'), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var quantity) || quantity <= 0) { error = "Enter a quantity greater than zero."; return null; }
         if (!_decimalQuantity.Checked && quantity != decimal.Truncate(quantity)) { error = "Select Use decimal number to enter a fractional quantity."; return null; }
         return new LabelRequest(c.OepsPn, c.Mpn, month, year, quantity, _monthUnavailable.Checked, _yearUnavailable.Checked, _session.Packaging, _session.RandomCode);
     }
     private void UpdateValidation()
     {
+        _camera.Enabled = !_submitting;
         _printerSettings.Enabled = !_submitting && _printer.SelectedItem is string;
         var isExpensive = _session.Selected?.IsExpensive == true;
         _pn.Text = _session.Selected is { } selected ? selected.OepsPn + (isExpensive ? " - EXPENSIVE ITEM💰" : "") : "—";
@@ -513,6 +536,68 @@ public sealed class MainForm : Form
             : last is null ? $"Database not synced · {next}" : $"Database synced {last.Value.LocalDateTime:HH:mm} · {next}";
         _toolTip.SetToolTip(_syncStatus, $"{_repository.Components.Count} pairings. Last successful sync: {age}." + (_repository.LastError is null ? "" : $"\n{_repository.LastError}"));
     }
+    private void SaveCameraPreferences()
+    {
+        _settings.CameraExternal = _cameraServer.SelectedIndex == 1;
+        _settings.CameraIp = _cameraIp.Text.Trim();
+    }
+    private void OpenCamera()
+    {
+        if (_submitting) return;
+        if (_cameraServer.SelectedIndex == 1 && !IPAddress.TryParse(_cameraIp.Text.Trim(), out _))
+        {
+            _jobStatus.Text = "Enter the external camera server's IP address.";
+            _cameraIp.Focus(); return;
+        }
+        SaveCameraPreferences();
+        try { _settings.Save(_paths.SettingsFile); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        { _jobStatus.Text = "Could not save camera preferences: " + e.Message; return; }
+        using var dialog = new CameraForm(_settings.CameraIp, _settings.CameraPort, !_settings.CameraExternal,
+            ResolveCameraComponent, PrintCameraAsync, ApplyCameraReading) { Icon = Icon };
+        dialog.ShowDialog(this);
+    }
+    private Component ResolveCameraComponent(CameraReading reading)
+    {
+        if (!_repository.HasData || !_repository.HasExpensiveData)
+            throw new InvalidOperationException("Update the database before using camera readings.");
+        return reading.ResolveComponent(_repository.Components, _session.Selected);
+    }
+    private async Task<string> PrintCameraAsync(CameraReading reading, decimal quantity)
+    {
+        if (_submitting) throw new InvalidOperationException("A print submission is already running.");
+        var component = ResolveCameraComponent(reading);
+        _submitting = true; UpdateValidation();
+        try
+        {
+            var result = await SendLabelsAsync(reading.Request(component.Mpn, quantity), component.IsExpensive);
+            _jobStatus.Text = result;
+            return result;
+        }
+        catch (Exception e) { _jobStatus.Text = e.Message; throw; }
+        finally { _submitting = false; UpdateValidation(); }
+    }
+    private void ApplyCameraReading(CameraReading reading, decimal quantity)
+    {
+        var component = ResolveCameraComponent(reading);
+        var request = reading.Request(component.Mpn, quantity);
+        _ = LabelValues.FormatQuantityDataMatrix(quantity);
+        _ = LabelValues.FormatLot(request);
+        _changingSearch = true;
+        try { _search.Text = _oepsMode.Checked ? component.OepsPn : component.Mpn; }
+        finally { _changingSearch = false; }
+        _monthUnavailable.Checked = reading.MonthUnavailable;
+        _yearUnavailable.Checked = reading.YearUnavailable;
+        if (!reading.MonthUnavailable) _month.SelectedItem = reading.Month.ToString("00");
+        if (!reading.YearUnavailable) _year.SelectedItem = reading.Year.ToString("0000");
+        _packaging.SelectedItem = reading.Packaging;
+        _decimalQuantity.Checked = quantity != decimal.Truncate(quantity);
+        _quantity.Value = quantity;
+        _session.Select(component); _session.UseScannedLot(request);
+        HideSuggestions(); UpdateValidation();
+        _jobStatus.Text = "Fields updated from camera. Lot: " + reading.Lot;
+        _quantity.Focus(); _quantity.Select(0, _quantity.Text.Length);
+    }
     private async Task SubmitAsync()
     {
         if (_submitting) return;
@@ -524,9 +609,29 @@ public sealed class MainForm : Form
             $"Print L3 followed by L3 expensive?\n\nComponent: {request.OepsPn}\nMPN: {request.Mpn}\nL3: {queue}, {_config.Printer.PrintSpeedIps} in/s, darkness {_config.Printer.Darkness}\nL3 expensive: {_config.ExpensivePrinter?.QueueName}, {_config.ExpensivePrinter?.PrintSpeedIps} in/s, darkness {_config.ExpensivePrinter?.Darkness}\nMedia: 30 × 50 mm, ribbon, gaps\n\nThis sends TWO physical labels. Production validation remains disabled.",
             "Confirm printer test", MessageBoxButtons.OKCancel, MessageBoxIcon.Information) != DialogResult.OK) return;
         _submitting = true; UpdateValidation();
+        try
+        {
+            _jobStatus.Text = await SendLabelsAsync(request, isExpensive);
+            _session.NextLot();
+        }
+        catch (Exception e) { _jobStatus.Text = e.Message; }
+        finally
+        {
+            _submitting = false;
+            if (!IsDisposed) { _toolTip.SetToolTip(_jobStatus, _jobStatus.Text); UpdateValidation(); }
+        }
+    }
+    private async Task<string> SendLabelsAsync(LabelRequest request, bool isExpensive)
+    {
+        var dryRun = _dryRun.Checked;
+        var queue = _printer.SelectedItem as string;
         var acceptedLabels = new List<string>();
         try
         {
+            if (_jobRenderer is null) throw new InvalidOperationException(_templateError ?? "Label template unavailable.");
+            if (isExpensive && _expensiveTemplateError is not null) throw new InvalidOperationException(_expensiveTemplateError);
+            if (!dryRun && string.IsNullOrWhiteSpace(queue)) throw new InvalidOperationException("Select an installed printer queue.");
+            string result;
             if (dryRun)
             {
                 var rendered = _config.ExpensivePrinter is null ? _jobRenderer!.Render(request, isExpensive)
@@ -535,7 +640,7 @@ public sealed class MainForm : Form
                 Directory.CreateDirectory(_paths.DryRunDirectory);
                 var file = Path.Combine(_paths.DryRunDirectory, $"label-{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.zpl");
                 await File.WriteAllBytesAsync(file, rendered.Bytes, _closing.Token);
-                _jobStatus.Text = $"Saved {rendered.LabelCount} label(s): " + file;
+                result = $"Saved {rendered.LabelCount} label(s): " + file;
             }
             else
             {
@@ -547,17 +652,14 @@ public sealed class MainForm : Form
                     var submission = await new RawPrinterTransport().SendAsync(label.Queue, label.Bytes, _closing.Token);
                     acceptedLabels.Add($"{label.Name}: {label.Queue}, job {submission.JobId}");
                 }
-                _jobStatus.Text = "Spooler accepted: " + string.Join("; ", acceptedLabels) + ". Check physical output.";
+                result = "Spooler accepted: " + string.Join("; ", acceptedLabels) + ". Check physical output.";
             }
-            _jobStatus.Text += " Lot: " + LabelValues.FormatLot(request);
-            _session.NextLot();
+            return result + " Lot: " + LabelValues.FormatLot(request);
         }
-        catch (Exception e) { _jobStatus.Text = (dryRun ? "Dry run failed: " : "Submission failed or uncertain. Check the printer before retrying: ") + e.Message
-            + (acceptedLabels.Count == 0 ? "" : " Already accepted: " + string.Join("; ", acceptedLabels) + ". Retrying prints these again."); }
-        finally
+        catch (Exception e)
         {
-            _submitting = false;
-            if (!IsDisposed) { _toolTip.SetToolTip(_jobStatus, _jobStatus.Text); UpdateValidation(); }
+            throw new InvalidOperationException((dryRun ? "Dry run failed: " : "Submission failed or uncertain. Check the printer before retrying: ") + e.Message
+                + (acceptedLabels.Count == 0 ? "" : " Already accepted: " + string.Join("; ", acceptedLabels) + ". Retrying prints these again."), e);
         }
     }
     private async Task CheckReleaseAsync()
@@ -591,6 +693,7 @@ public sealed class MainForm : Form
             _settings.LastPrinterName = _printer.SelectedItem as string ?? _settings.LastPrinterName;
             _settings.SearchMode = _oepsMode.Checked ? SearchMode.OepsPn : SearchMode.Mpn;
             _settings.ExtendedDescription = _extendedDescription.Checked;
+            SaveCameraPreferences();
             _settings.Save(_paths.SettingsFile);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { MessageBox.Show(this, "Could not save preferences: " + ex.Message, Text); }
@@ -642,8 +745,15 @@ public sealed class MainForm : Form
                 throw new Exception("Quantity must default to whole numbers without a decimal suffix.");
             _decimalQuantity.Checked = true;
             _quantity.Value = 12.345m;
-            if (_quantity.DecimalPlaces != 3 || GetRequest(out _)?.Quantity != 12.345m)
+            if (_quantity.DecimalPlaces != 9 || GetRequest(out _)?.Quantity != 12.345m)
                 throw new Exception("Decimal mode did not pass the fractional quantity to printing.");
+            _quantity.Value = 0.00211234m;
+            if (GetRequest(out _)?.Quantity != 0.00211234m || _renderer!.Render(GetRequest(out _)!).BarcodePayload.Split('*')[3] != "0.00211234")
+                throw new Exception("Small decimal quantity was rounded or padded incorrectly.");
+            _quantity.Value = 0;
+            if (_print.Enabled || GetRequest(out _) is not null)
+                throw new Exception("Zero quantity must disable printing.");
+            _quantity.Value = 12.345m;
             _decimalQuantity.Checked = false;
             if (_quantity.DecimalPlaces != 0 || _quantity.Value != 12m || GetRequest(out _)?.Quantity != 12m)
                 throw new Exception("Disabling decimal mode retained a hidden fractional quantity.");
@@ -667,31 +777,31 @@ public sealed class MainForm : Form
                 throw new Exception("Year width or unavailable checkbox alignment is incorrect.");
             if (!_year.Items.Cast<string>().SequenceEqual(Enumerable.Range(2020, DateTime.Now.Year - 2020 + 1).Select(y => y.ToString("0000"))))
                 throw new Exception("Year options must run from 2020 to the current year.");
-            report.Add("PASS packaging selection, stable lot across refresh and matching printed QR/preview");
+            report.Add("PASS packaging selection, stable lot across refresh and matching printed Data Matrix/preview");
             _search.Text += "x";
             if (_session.Selected is not null || _print.Enabled) throw new Exception("Search edit retained stale selection.");
             report.Add("PASS refresh preserves form entries; editing search invalidates selection");
             if (_dryRun.Enabled) throw new Exception("Sample mode permits production.");
             report.Add("PASS sample production lock");
             _search.Text = "OEPS101234"; ShowSuggestions(); _suggestions.SelectedIndex = 0; SelectSuggestion();
-            if (!_dateHint.Text.StartsWith("Print as 0926_")) throw new Exception("Inline reception date hint is inconsistent.");
+            if (!_dateHint.Text.StartsWith("Print as 0926-")) throw new Exception("Inline reception date hint is inconsistent.");
             _monthUnavailable.Checked = true;
             await RefreshAsync();
-            if (!_monthUnavailable.Checked || _month.Enabled || !_year.Enabled || !_dateHint.Text.StartsWith("Print as 0026_") || !_print.Enabled
+            if (!_monthUnavailable.Checked || _month.Enabled || !_year.Enabled || !_dateHint.Text.StartsWith("Print as 0026-") || !_print.Enabled
                 || _renderer!.Render(GetRequest(out _)!).DateMmyy != "0026")
                 throw new Exception("Month-only unavailability must print 00YY and survive refresh.");
             _yearUnavailable.Checked = true;
-            if (_month.Enabled || _year.Enabled || !_dateHint.Text.StartsWith("Print as 0000_"))
+            if (_month.Enabled || _year.Enabled || !_dateHint.Text.StartsWith("Print as 0000-"))
                 throw new Exception("Both unavailable fields must print 0000.");
             if (_renderer!.Render(GetRequest(out _)!).DateMmyy != "0000") throw new Exception("Unavailable date did not reach the renderer.");
             await SubmitAsync();
             _monthUnavailable.Checked = false;
             await RefreshAsync();
-            if (!_month.Enabled || _year.Enabled || !_yearUnavailable.Checked || !_dateHint.Text.StartsWith("Print as 0900_") || !_print.Enabled
+            if (!_month.Enabled || _year.Enabled || !_yearUnavailable.Checked || !_dateHint.Text.StartsWith("Print as 0900-") || !_print.Enabled
                 || _renderer!.Render(GetRequest(out _)!).DateMmyy != "0900")
                 throw new Exception("Year-only unavailability must print MM00 and survive refresh.");
             _yearUnavailable.Checked = false;
-            if (!_month.Enabled || !_year.Enabled || _month.Text != "09" || _year.Text != "2026" || !_dateHint.Text.StartsWith("Print as 0926_"))
+            if (!_month.Enabled || !_year.Enabled || _month.Text != "09" || _year.Text != "2026" || !_dateHint.Text.StartsWith("Print as 0926-"))
                 throw new Exception("Toggling date availability did not preserve the entered date.");
             report.Add("PASS separate month/year zero checkboxes, preserved selections and printed 00YY/MM00/0000");
             var originalSelection = _session.Selected!;
@@ -705,6 +815,18 @@ public sealed class MainForm : Form
             _extendedDescription.Checked = false;
             _session.Select(originalSelection); UpdateValidation();
             report.Add("PASS short/full description toggle, bracket trimming and exact font sizes");
+            var beforeCamera = GetRequest(out _)!;
+            await CameraForm.RunSmokeAsync(this, _paths.UserDataRoot, ResolveCameraComponent,
+                async (reading, quantity) =>
+                {
+                    var result = await PrintCameraAsync(reading, quantity);
+                    if (GetRequest(out _) != beforeCamera) throw new Exception("Camera printing changed main form inputs.");
+                    return result;
+                }, ApplyCameraReading);
+            var cameraRequest = GetRequest(out _)!;
+            if (cameraRequest.Quantity != 9.125m || LabelValues.FormatLot(cameraRequest) != "0926-TRAY-IJKL" || !_decimalQuantity.Checked)
+                throw new Exception("Camera import lost lot, quantity or decimal mode.");
+            report.Add("PASS camera shortcuts, immediate replacement, duplicate suppression, immutable print, expensive labels, field import and disconnect");
             _jobStatus.Text = "";
             using var screenshot = CaptureWindow();
             Directory.CreateDirectory(_paths.UserDataRoot); screenshot.Save(Path.Combine(_paths.UserDataRoot, "ui-smoke.png"));

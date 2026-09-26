@@ -23,31 +23,27 @@ public sealed class LabelRenderer
     public RenderedLabel Render(LabelRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var pnText = LabelValues.FormatOepsPn(request.OepsPn);
+        var pnText = LabelValues.FormatL3OepsPn(request.OepsPn);
         var date = LabelValues.FormatDate(request.Month, request.Year, request.MonthUnavailable, request.YearUnavailable);
         var lot = LabelValues.FormatLot(request);
         var quantity = LabelValues.FormatQuantity(request.Quantity);
         if (request.OepsPn.Replace("-", "", StringComparison.Ordinal).Length > 11)
             throw new ArgumentException("OEPS PN exceeds the supplied label's 11-character layout.");
-        if (quantity.Length > 7) throw new ArgumentException("Quantity exceeds the supplied label's seven-character field.");
+        var barcode = L3Barcode.Encode(request.OepsPn, lot, LabelValues.FormatQuantityDataMatrix(request.Quantity));
         if (string.IsNullOrWhiteSpace(request.Mpn) || request.Mpn.Length > 256 || request.Mpn.Any(char.IsControl))
             throw new ArgumentException("MPN must contain 1–256 characters and no line breaks or control characters.");
         var fields = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["OEPS_PN"] = pnText, ["OEPS_PN_Datamatrix"] = request.OepsPn, ["MPN"] = request.Mpn,
-            ["OEPS_Lot_QR"] = lot, ["Lot_Date"] = date,
-            ["Lot_Packing"] = LabelValues.PackagingCodes[request.Packaging], ["Lot_Random"] = request.RandomCode,
-            ["Quantity"] = quantity, ["OEPS_Quantity_Datamatrix"] = LabelValues.FormatQuantityDataMatrix(request.Quantity)
+            ["OEPS_PN"] = pnText, ["MPN"] = request.Mpn, ["Datamatrix"] = barcode,
+            ["Lot"] = lot, ["Lot_Packaging"] = request.Packaging, ["Quantity"] = quantity
         };
         var zpl = template;
-        if (request.Quantity == 0)
-            zpl = zpl.Replace("^FT204,115^BXB,7,200,0,0,1,_,1\n^FH\\^FD{{OEPS_Quantity_Datamatrix}}^FS\n", "", StringComparison.Ordinal);
         foreach (var (key, value) in fields)
             zpl = zpl.Replace("{{" + key + "}}", LabelValues.EscapeField(value), StringComparison.Ordinal);
         if (zpl.Contains("{{", StringComparison.Ordinal) || zpl.Contains("}}", StringComparison.Ordinal))
             throw new InvalidOperationException("The label contains an unresolved placeholder.");
         zpl += "\n";
-        return new(Encoding.ASCII.GetBytes(zpl), zpl, pnText, request.OepsPn, date, 0, lot);
+        return new(Encoding.ASCII.GetBytes(zpl), zpl, pnText, barcode, date, 0, lot);
     }
     public RenderedLabel RenderProduction(LabelRequest request, PrinterConfiguration printer, string selectedQueue)
     {

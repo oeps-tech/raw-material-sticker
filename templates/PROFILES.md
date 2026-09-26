@@ -24,7 +24,7 @@ encoded; changing this value does not reprocess them. Re-export the graphic if a
 different conversion is required and physically validate the revised template.
 
 Production printing is enabled following the user's earlier printer tests. The
-September 9 layouts use the newly supplied label exports; these revisions still
+September 25 L3 layout uses the newly supplied label export; this revision still
 need a physical print and scan check. Each profile records its current template
 hash in `validatedTemplateSha256` and its validation history in `validationNotes`.
 Dry runs include both labels' actual setup commands, without submitting to a printer.

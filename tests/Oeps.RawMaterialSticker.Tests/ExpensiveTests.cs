@@ -95,7 +95,7 @@ public static class ExpensiveTests
         Assert.Equal(1, Regex.Matches(zpl, Regex.Escape(pnField)).Count);
         var mpnField = "^FD" + LabelValues.EscapeField(request.Mpn) + "^FS";
         Assert.Equal(2, Regex.Matches(zpl, Regex.Escape(mpnField)).Count);
-        Assert.True(zpl.Contains("^FD" + LabelValues.EscapeField("0000") + "^FS"));
+        Assert.True(zpl.Contains("^FD" + LabelValues.EscapeField("0000-OTHR-0000") + "^FS"));
         var graphic = ExpensiveLabelRenderer.BuiltInTemplate.Split('\n').Single(line => line.Contains("^GFA,")).TrimEnd('\r');
         Assert.True(zpl.Contains(graphic));
         Assert.True(zpl.Contains("^FDATTENTION^FS"));

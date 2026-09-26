@@ -7,11 +7,14 @@ namespace Oeps.RawMaterialSticker.Core.Configuration;
 public sealed class UserSettings
 {
     private const int CurrentWindowLayoutVersion = 1;
-    public const int MinimumWindowHeight = 610;
+    public const int MinimumWindowHeight = 690;
 
     public string? LastPrinterName { get; set; }
     public SearchMode SearchMode { get; set; } = SearchMode.OepsPn;
     public bool ExtendedDescription { get; set; }
+    public bool CameraExternal { get; set; }
+    public string CameraIp { get; set; } = "";
+    public int CameraPort { get; set; } = 8765;
     public Dictionary<string, PrinterOffsets> PrinterOffsets { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public int WindowWidth { get; set; } = 620;
     public int WindowHeight { get; set; } = MinimumWindowHeight;
@@ -40,6 +43,8 @@ public sealed class UserSettings
             settings.WindowWidth = Math.Clamp(settings.WindowWidth, 560, 3840);
             settings.WindowHeight = Math.Clamp(settings.WindowHeight, MinimumWindowHeight, 2160);
             if (!Enum.IsDefined(settings.SearchMode)) settings.SearchMode = SearchMode.OepsPn;
+            if (settings.CameraPort is < 1 or > 65535) settings.CameraPort = 8765;
+            settings.CameraIp ??= "";
             settings.PrinterOffsets = new(settings.PrinterOffsets ?? new(), StringComparer.OrdinalIgnoreCase);
             return settings;
         }

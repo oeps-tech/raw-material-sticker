@@ -12,19 +12,19 @@ public static partial class LabelValues
 {
     public static IReadOnlyDictionary<string, string> PackagingCodes { get; } = new Dictionary<string, string>
     {
-        ["Reel"] = "REEL", ["Tube"] = "TUBE", ["Tape"] = "TAPE", ["Bag"] = "_BAG",
-        ["Box"] = "_BOX", ["Tray"] = "TRAY", ["Spool"] = "SPOL", ["Other"] = "OTHR"
+        ["Reel"] = "REEL", ["Tube"] = "TUBE", ["Tape"] = "TAPE", ["Bag"] = "BAG",
+        ["Box"] = "BOX", ["Tray"] = "TRAY", ["Spool"] = "SPOL", ["Other"] = "OTHR"
     };
     public static string NewRandomCode()
     {
-        const string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        const string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         return new string(Enumerable.Range(0, 4).Select(_ => alphabet[RandomNumberGenerator.GetInt32(alphabet.Length)]).ToArray());
     }
     public static string FormatLot(LabelRequest request)
     {
         if (!PackagingCodes.TryGetValue(request.Packaging, out var pack)) throw new ArgumentException("Select a packaging type.");
-        if (request.RandomCode.Length != 4 || !request.RandomCode.All(char.IsAsciiLetterOrDigit)) throw new ArgumentException("Lot random code must contain four ASCII letters or digits.");
-        return $"{FormatDate(request.Month, request.Year, request.MonthUnavailable, request.YearUnavailable)}_{pack}_{request.RandomCode}";
+        if (request.RandomCode.Length != 4 || !request.RandomCode.All(c => c is >= 'A' and <= 'Z' or >= '0' and <= '9')) throw new ArgumentException("Lot random code must contain four uppercase ASCII letters or digits.");
+        return $"{FormatDate(request.Month, request.Year, request.MonthUnavailable, request.YearUnavailable)}-{pack}-{request.RandomCode}";
     }
     public static string FormatOepsPn(string value)
     {
@@ -35,6 +35,15 @@ public static partial class LabelValues
         var suffix = match.Groups[1].Value;
         var shortLetterSeries = suffix.Length == 6 && char.IsAsciiLetter(suffix[0]) && suffix.Skip(1).All(char.IsAsciiDigit);
         var split = suffix.Length == 7 || shortLetterSeries ? 3 : 2;
+        return $"OEPS {suffix[..split]} {suffix[split..]}";
+    }
+
+    // L3's new map differs from the retained L3 expensive text grouping.
+    public static string FormatL3OepsPn(string value)
+    {
+        _ = FormatOepsPn(value);
+        var suffix = OepsPattern().Match(value).Groups[1].Value;
+        var split = suffix.Length == 6 && char.IsAsciiLetter(suffix[0]) ? 3 : 2;
         return $"OEPS {suffix[..split]} {suffix[split..]}";
     }
 
@@ -51,16 +60,16 @@ public static partial class LabelValues
     public static string FormatQuantityDataMatrix(decimal quantity)
     {
         var text = FormatQuantity(quantity);
-        if (text.Length == 0) return "";
-        var payload = "0" + text;
-        return payload.PadLeft(7, '0');
+        var digits = text.Count(char.IsAsciiDigit);
+        if (digits > 10) throw new ArgumentException("Quantity must contain at most 10 digits (excluding the decimal point).");
+        return text.PadLeft(7, '0');
     }
 
     public static string FormatQuantity(decimal quantity)
     {
-        if (quantity < 0)
-            throw new ArgumentOutOfRangeException(nameof(quantity), "Quantity must be zero or a positive number of components.");
-        return quantity == 0 ? "" : quantity.ToString("0.############################", CultureInfo.InvariantCulture);
+        if (quantity <= 0)
+            throw new ArgumentOutOfRangeException(nameof(quantity), "Quantity must be greater than zero.");
+        return quantity.ToString("0.############################", CultureInfo.InvariantCulture);
     }
 
     // Every byte, including ZPL prefixes and the hex introducer itself, is encoded.

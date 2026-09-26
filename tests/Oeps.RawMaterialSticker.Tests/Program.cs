@@ -26,6 +26,7 @@ internal static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "--verify-sound") return ScannerSoundTests.VerifyDevicePlayback();
         if (args.Length == 2 && args[0] == "--verify-live") return await IntegrationChecks.VerifyLiveAsync(args[1]);
         if (args.Length == 3 && args[0] == "--verify-package") return await IntegrationChecks.VerifyPackageAsync(args[1], args[2]);
         int passed = 0, failed = 0;

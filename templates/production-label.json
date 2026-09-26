@@ -14,10 +14,10 @@
     "offsetYDots":  0,
     "templatePath":  "templates/production-label.zpl",
     "productionValidated":  true,
-    "validatedTemplateSha256":  "cb697796faa25d200dfd4fcb7c7fa2b6ae46150b623a2d7fd4be20852526ea68",
+    "validatedTemplateSha256":  "10afd22721f342b5d406ba4a7b7eea52ebd99ffdd562a11a483099f58369ed59",
     "validatedExpensiveTemplateSha256":  null,
     "longestValidatedOepsPn":  null,
-    "validationNotes":  "Production authorized by user on 2026-09-08. Layout updated from user-supplied L3 export on 2026-09-10 to add two divider lines. This revision has not yet been physically tested. Runtime template hash identifies this revision.",
+    "validationNotes":  "Production authorized by user. L3 replaced from the 2026-09-25 export with a combined version-1 Data Matrix and CRC-32. Runtime hash identifies this revision; physical print/scan validation of this revision is pending.",
     "requireTestedPnLimit":  false,
     "useSelectedPrinter":  true
 }

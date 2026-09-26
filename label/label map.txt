@@ -23,7 +23,7 @@ If 10 chars:
 If 11 chars: XXXX XX XXXXX
 
 [2]
-MMYY_PACK_RAND
+MMYY-PACK-RAND
 
 PACK is mapped in this way:
 Reel > REEL

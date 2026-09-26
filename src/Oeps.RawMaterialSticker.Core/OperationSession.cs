@@ -14,6 +14,14 @@ public sealed class OperationSession
     public string Packaging { get; set; } = "Other";
     public string RandomCode { get; private set; } = LabelValues.NewRandomCode();
     public void NextLot() => RandomCode = LabelValues.NewRandomCode();
+    public void UseScannedLot(LabelRequest request)
+    {
+        _ = LabelValues.FormatLot(request);
+        Month = request.MonthUnavailable ? Month : request.Month.ToString("00");
+        Year = request.YearUnavailable ? Year : request.Year.ToString("0000");
+        MonthUnavailable = request.MonthUnavailable; YearUnavailable = request.YearUnavailable;
+        Packaging = request.Packaging; RandomCode = request.RandomCode;
+    }
     public string Quantity { get; set; } = "";
     public void Select(Component component) => Selected = component;
     public void InvalidateSelection() => Selected = null;

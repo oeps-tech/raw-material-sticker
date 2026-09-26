@@ -8,6 +8,8 @@
     <RollForward>LatestPatch</RollForward>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="Scanner.Client"><HintPath>../../client-sdk/Scanner.Client.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Scanner.Contracts"><HintPath>../../client-sdk/Scanner.Contracts.dll</HintPath><Private>true</Private></Reference>
     <EmbeddedResource Include="../../assets/app.ico" LogicalName="Oeps.AppIcon" />
     <ProjectReference Include="../Oeps.RawMaterialSticker.Core/Oeps.RawMaterialSticker.Core.csproj" />
     <Content Include="../../appsettings.json" Link="appsettings.json" CopyToOutputDirectory="PreserveNewest" />

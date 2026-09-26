@@ -44,8 +44,7 @@ public static class ProductionGuard
                 errors.Add("MPN exceeds the conservative 34-character limit of the supplied text field; validate a revised layout.");
             if (request.Mpn.Any(c => c is < ' ' or > '~') || request.Mpn.Contains('\\'))
                 errors.Add("The supplied MPN font is production-validated only for printable ASCII without backslashes; review its glyphs/layout for this MPN.");
-            if (LabelValues.FormatQuantity(request.Quantity).Length > 7)
-                errors.Add("Quantity exceeds the conservative 7-digit limit of the supplied text field; validate a revised layout.");
+            _ = LabelValues.FormatQuantityDataMatrix(request.Quantity);
         }
         catch (ArgumentException ex)
         {

@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>Scanner.Client</name>
+    </assembly>
+    <members>
+        <member name="T:Scanner.Client.ScannerConnection">
+            <summary>Connects to the OEPS scanner server and receives its validated label messages.</summary>
+        </member>
+        <member name="E:Scanner.Client.ScannerConnection.JsonReceived">
+            <summary>
+            Raised once per valid server message with the original JSON, including quantity as a string.
+            Subscribe before connecting. Handlers run on the receive loop; keep them short and marshal UI updates.
+            </summary>
+        </member>
+        <member name="M:Scanner.Client.ScannerConnection.ConnectAsync(System.String,System.Int32,System.Boolean,System.Threading.CancellationToken)">
+            <summary>Connects to the server at the given IP/host and port, or to this computer.</summary>
+            <param name="ip">Server IP address or host name. Ignored (and may be null) when thisComputer is true.</param>
+            <param name="port">The scanner server's listening port, normally 8765.</param>
+            <param name="thisComputer">Use 127.0.0.1 instead of ip.</param>
+            <param name="cancellationToken">Cancels connection establishment, not the subsequent receive loop.</param>
+        </member>
+        <member name="M:Scanner.Client.ScannerConnection.CloseAsync">
+            <summary>Closes this client's connection. The same instance can be connected again.</summary>
+        </member>
+    </members>
+</doc>
